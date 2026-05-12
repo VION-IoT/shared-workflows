@@ -78,6 +78,13 @@ Per-secret consumer map:
 
 ## Access
 
-Actions access policy: **"Accessible from repositories in the `VION-IoT`
-organization"**. Both private and public VION-IoT repos can invoke the
-workflows defined here.
+This repository is **public** because GitHub Free org tier does not
+allow public repos to invoke reusable workflows in a private repo. The
+public source-available consumers (`dale-sdk`, `vion-contracts`,
+`service-provider-sdk-dotnet`, `documentation`) need to call into the
+workflows defined here, so visibility had to match.
+
+Going public exposes the workflow and composite-action source — including
+the Azure DevOps feed URL referenced in `actions/setup-nuget-private-feed`.
+Secrets remain with each caller (per-repo); the PAT and other credentials
+are never exposed.
