@@ -1,0 +1,33 @@
+name: Setup NuGet private feed
+description: |
+  Registers the VION internal Azure DevOps NuGet feed as a package source
+  named "PrivateFeed". The feed URL is hardcoded here and masked in logs;
+  the credential is passed via input from a caller-held secret.
+
+  Requires the .NET SDK to be installed on the runner (e.g. via
+  actions/setup-dotnet beforehand).
+
+inputs:
+  pat:
+    description: Azure DevOps PAT with package read access
+    required: true
+  source-name:
+    description: Source name to register (default "PrivateFeed")
+    required: false
+    default: PrivateFeed
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PAT: ${{ inputs.pat }}
+        SOURCE_NAME: ${{ inputs.source-name }}
+      run: |
+        URL="https://pkgs.dev.azure.com/ecocoachsmarthome/Ecocoach/_packaging/ecocoach.csharplogicsystem/nuget/v3/index.json"
+        echo "::add-mask::$URL"
+        dotnet nuget add source "$URL" \
+          --name "$SOURCE_NAME" \
+          --username AzureDevOps \
+          --password "$PAT" \
+          --store-password-in-clear-text

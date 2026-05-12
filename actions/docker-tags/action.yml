@@ -1,0 +1,40 @@
+name: Docker tags (VION scheme)
+description: |
+  Wraps docker/metadata-action with the VION tag convention:
+    - push to main           -> :main + :main-{sha7}
+    - push tag vX.Y.Z        -> :X.Y.Z (+ :latest on non-pre-release)
+    - push tag vX.Y.Z-foo    -> :X.Y.Z-foo (no :latest)
+    - workflow_dispatch      -> :manual-{sha7}
+    - pull_request           -> none (caller decides whether to push)
+
+inputs:
+  images:
+    description: Newline-separated image references (e.g. vionimages.azurecr.io/dashboard)
+    required: true
+
+outputs:
+  tags:
+    description: Newline-separated computed tags
+    value: ${{ steps.meta.outputs.tags }}
+  labels:
+    description: Newline-separated computed labels
+    value: ${{ steps.meta.outputs.labels }}
+  version:
+    description: Resolved version string
+    value: ${{ steps.meta.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ inputs.images }}
+        tags: |
+          type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+          type=raw,value=main-{{sha}},enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+          type=semver,pattern={{version}}
+          type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+          type=raw,value=manual-{{sha}},enable=${{ github.event_name == 'workflow_dispatch' }}
+        flavor: |
+          latest=false

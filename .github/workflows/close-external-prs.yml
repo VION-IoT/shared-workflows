@@ -1,0 +1,42 @@
+name: Close external PRs
+# Reusable workflow: auto-closes pull requests opened from a fork (i.e.,
+# from outside the org). Used by source-available repos where external
+# contributions are not accepted.
+#
+# Caller must trigger this on `pull_request_target` (not `pull_request`)
+# so the workflow runs in the base repo's context and has the permissions
+# needed to comment and close. Caller must also grant `pull-requests: write`.
+#
+# Internal PRs (same-repo branches, dependabot, github-actions[bot]) are
+# unaffected: the filter checks `head.repo.full_name != github.repository`.
+
+on:
+  workflow_call:
+    inputs:
+      message:
+        required: false
+        type: string
+        default: |
+          Thanks for the interest. This repository is **source-available** —
+          external pull requests are not accepted and have been closed
+          automatically.
+
+          For integration help, see [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md)
+          or contact support@vion-iot.com.
+
+jobs:
+  close:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment and close
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BODY: ${{ inputs.message }}
+        run: |
+          gh pr comment "$PR" --repo "$REPO" --body "$BODY"
+          gh pr close "$PR" --repo "$REPO"

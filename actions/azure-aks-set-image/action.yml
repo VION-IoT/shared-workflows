@@ -1,0 +1,78 @@
+name: Azure AKS set image
+description: |
+  OIDC Azure login -> AKS context -> kubectl set image -> rollout wait.
+  Caller is expected to run this on a job that has `id-token: write` and
+  on a runner reachable from the cluster (e.g. self-hosted with VPN).
+
+  Linux and Windows runners are both supported; the action picks the
+  matching code path automatically.
+
+inputs:
+  azure-client-id:
+    required: true
+  azure-tenant-id:
+    required: true
+  azure-subscription-id:
+    required: true
+  resource-group:
+    required: true
+  cluster-name:
+    required: true
+  deployment:
+    required: true
+    description: Kubernetes deployment name (also used as namespace if `namespace` omitted)
+  container:
+    required: true
+    description: Container name inside the deployment to update
+  image:
+    required: true
+    description: Full image reference (registry/repo:tag)
+  namespace:
+    required: false
+    default: ""
+    description: Kubernetes namespace; defaults to deployment name
+  timeout:
+    required: false
+    default: "5m"
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/login@v2
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
+
+    - uses: azure/aks-set-context@v4
+      with:
+        resource-group: ${{ inputs.resource-group }}
+        cluster-name: ${{ inputs.cluster-name }}
+
+    - if: runner.os == 'Linux'
+      shell: bash
+      env:
+        DEPLOYMENT: ${{ inputs.deployment }}
+        CONTAINER: ${{ inputs.container }}
+        IMAGE: ${{ inputs.image }}
+        NS: ${{ inputs.namespace }}
+        TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        NS="${NS:-$DEPLOYMENT}"
+        kubectl set image "deployment/$DEPLOYMENT" "$CONTAINER=$IMAGE" -n "$NS"
+        kubectl rollout status "deployment/$DEPLOYMENT" -n "$NS" --timeout="$TIMEOUT"
+        echo "Deployed $IMAGE"
+
+    - if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        DEPLOYMENT: ${{ inputs.deployment }}
+        CONTAINER: ${{ inputs.container }}
+        IMAGE: ${{ inputs.image }}
+        NS: ${{ inputs.namespace }}
+        TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        $ns = if ($env:NS) { $env:NS } else { $env:DEPLOYMENT }
+        kubectl set image "deployment/$($env:DEPLOYMENT)" "$($env:CONTAINER)=$($env:IMAGE)" -n $ns
+        kubectl rollout status "deployment/$($env:DEPLOYMENT)" -n $ns --timeout=$env:TIMEOUT
+        Write-Host "Deployed $($env:IMAGE)"

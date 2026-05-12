@@ -1,0 +1,27 @@
+name: Compute version
+description: |
+  Derives a release/CI version from $GITHUB_REF:
+    - vX.Y.Z tag push      -> version=X.Y.Z, is_release=true
+    - anything else        -> version=0.0.0-ci.<run_number>, is_release=false
+
+outputs:
+  version:
+    description: Resolved semver string
+    value: ${{ steps.compute.outputs.version }}
+  is_release:
+    description: "'true' when running for a vX.Y.Z tag, 'false' otherwise"
+    value: ${{ steps.compute.outputs.is_release }}
+
+runs:
+  using: composite
+  steps:
+    - id: compute
+      shell: bash
+      run: |
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          echo "is_release=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "version=0.0.0-ci.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "is_release=false" >> "$GITHUB_OUTPUT"
+        fi

@@ -1,0 +1,69 @@
+name: Deploy to AKS
+# Reusable workflow: thin wrapper around actions/azure-aks-set-image.
+# Updates a deployment's container image and waits for rollout.
+#
+# Caller is responsible for:
+#   - choosing when this runs (e.g. only on push-to-main or on tag pushes)
+#   - holding any required secrets via `secrets: inherit`
+#   - granting `id-token: write` (for OIDC Azure login)
+#
+# Runs on the `[self-hosted, vpn]` runner pool so it can reach AKS over VPN.
+
+on:
+  workflow_call:
+    inputs:
+      azure-client-id:
+        required: true
+        type: string
+      azure-tenant-id:
+        required: true
+        type: string
+      azure-subscription-id:
+        required: true
+        type: string
+      resource-group:
+        required: true
+        type: string
+      cluster-name:
+        required: true
+        type: string
+      deployment:
+        required: true
+        type: string
+      container:
+        required: true
+        type: string
+        description: Container name inside the deployment to update
+      image:
+        required: true
+        type: string
+        description: Full image reference (registry/repo:tag)
+      namespace:
+        required: false
+        type: string
+        default: ""
+      environment:
+        required: false
+        type: string
+        default: ""
+        description: GitHub Environment to attach (e.g. "test" or "production") for approval/secret gating
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, vpn]
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: VION-IoT/shared-workflows/actions/azure-aks-set-image@v1
+        with:
+          azure-client-id: ${{ inputs.azure-client-id }}
+          azure-tenant-id: ${{ inputs.azure-tenant-id }}
+          azure-subscription-id: ${{ inputs.azure-subscription-id }}
+          resource-group: ${{ inputs.resource-group }}
+          cluster-name: ${{ inputs.cluster-name }}
+          deployment: ${{ inputs.deployment }}
+          container: ${{ inputs.container }}
+          image: ${{ inputs.image }}
+          namespace: ${{ inputs.namespace }}

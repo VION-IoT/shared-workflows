@@ -1,0 +1,99 @@
+name: Publish NuGet
+# Reusable workflow: build + pack a .NET solution, push intermediate
+# packages to the VION private feed, and (on a vX.Y.Z tag) push to
+# nuget.org via Trusted Publishing (OIDC).
+#
+# Caller is responsible for:
+#   - holding AZURE_DEVOPS_PAT and NUGET_USER secrets
+#   - passing `secrets: inherit` (or naming each secret explicitly)
+#   - granting `id-token: write` and `contents: read` permissions
+
+on:
+  workflow_call:
+    inputs:
+      solution:
+        required: true
+        type: string
+        description: Path to the .sln or .slnx file (relative to repo root)
+      dotnet-version:
+        required: false
+        type: string
+        default: '10.0.x'
+      pack-output:
+        required: false
+        type: string
+        default: './artifacts'
+      push-to-nuget-org:
+        required: false
+        type: boolean
+        default: true
+        description: Push to nuget.org on stable (vX.Y.Z) tag pushes
+    secrets:
+      AZURE_DEVOPS_PAT:
+        required: true
+      NUGET_USER:
+        required: false
+        description: nuget.org username for Trusted Publishing OIDC handshake
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for nuget.org Trusted Publishing (OIDC)
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_release: ${{ steps.version.outputs.is_release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - id: version
+        uses: VION-IoT/shared-workflows/actions/compute-version@v1
+
+      - uses: VION-IoT/shared-workflows/actions/setup-nuget-private-feed@v1
+        with:
+          pat: ${{ secrets.AZURE_DEVOPS_PAT }}
+
+      - name: Build
+        run: dotnet build "${{ inputs.solution }}" -c Release -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Pack
+        run: >
+          dotnet pack "${{ inputs.solution }}" -c Release --no-build
+          -p:Version=${{ steps.version.outputs.version }}
+          -o "${{ inputs.pack-output }}"
+
+      - name: Push to private feed
+        if: github.event_name != 'pull_request'
+        run: >
+          dotnet nuget push "${{ inputs.pack-output }}/*.nupkg"
+          --source PrivateFeed
+          --api-key ${{ secrets.AZURE_DEVOPS_PAT }}
+          --skip-duplicate
+
+      # Trusted Publishing: request a short-lived API key via OIDC.
+      # Temp key is valid for 1 hour, so do this immediately before push.
+      # NOTE: `user:` must be an individual nuget.org username, not the org name.
+      - name: NuGet login (OIDC)
+        if: inputs.push-to-nuget-org && steps.version.outputs.is_release == 'true'
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        if: inputs.push-to-nuget-org && steps.version.outputs.is_release == 'true'
+        run: >
+          dotnet nuget push "${{ inputs.pack-output }}/*.nupkg"
+          --source https://api.nuget.org/v3/index.json
+          --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          --skip-duplicate
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: ${{ inputs.pack-output }}/*.*nupkg

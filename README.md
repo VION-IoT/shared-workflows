@@ -1,49 +1,79 @@
 # VION-IoT shared workflows
 
 Private repository hosting reusable GitHub Actions workflows and composite
-actions consumed by VION-IoT repos. Centralizes pipeline logic so that
-release, deploy, and policy concerns evolve in one place.
+actions consumed by VION-IoT repos. Centralizes pipeline logic so release,
+deploy, and policy concerns evolve in one place.
 
-See [`../architecture/concepts/`](https://github.com/VION-IoT/architecture)
-for the cross-repo context this fits into.
+For cross-repo context see
+[`architecture/systems/shared-workflows.md`](https://github.com/VION-IoT/architecture/blob/main/systems/shared-workflows.md).
+
+## Inventory
+
+### Reusable workflows (`.github/workflows/`)
+
+| Workflow | Purpose |
+|----------|---------|
+| `publish-nuget.yml` | .NET build + pack + push to private feed and (on stable tag) nuget.org via Trusted Publishing |
+| `deploy-aks.yml` | OIDC Azure login → AKS context → `kubectl set image` → rollout wait |
+| `close-external-prs.yml` | Auto-close PRs from forks (source-available repos) |
+
+### Composite actions (`actions/`)
+
+| Action | Purpose |
+|--------|---------|
+| `compute-version` | Derive `version` + `is_release` from `$GITHUB_REF` |
+| `setup-nuget-private-feed` | Register the VION internal NuGet feed; URL hidden inside the action and masked in logs |
+| `docker-tags` | Wrap `docker/metadata-action` with the VION tag scheme |
+| `azure-aks-set-image` | OIDC Azure login + AKS context + `kubectl set image` + rollout wait |
 
 ## How to consume
 
-### Reusable workflows
-
-Call a reusable workflow from a consuming repo with `uses:`:
+### Calling a reusable workflow
 
 ```yaml
 jobs:
   publish:
-    uses: VION-IoT/shared-workflows/.github/workflows/<name>.yml@v1
+    uses: VION-IoT/shared-workflows/.github/workflows/publish-nuget.yml@v1
     with:
-      # workflow-specific inputs
+      solution: Vion.Contracts.sln
     secrets: inherit
 ```
 
 Pin to a floating major tag (`@v1`) for low-friction updates, or to an
-exact tag (`@v1.2.3`) for production-critical pipelines.
+exact tag (`@v1.2.3`) for production-critical pipelines. Major-version
+bumps signal breaking changes — see `CHANGELOG.md`.
 
-### Composite actions
-
-Composite actions live under `actions/<name>/action.yml` and are referenced as:
+### Using a composite action
 
 ```yaml
-- uses: VION-IoT/shared-workflows/actions/<name>@v1
-  with:
-    # action-specific inputs
+- uses: VION-IoT/shared-workflows/actions/compute-version@v1
+  id: version
+- run: echo "Building ${{ steps.version.outputs.version }}"
 ```
+
+## Secrets model
+
+Secrets stay with each caller (per-repo, not org-level). Each reusable
+workflow declares the secrets it expects under `on.workflow_call.secrets`;
+callers pass them via `secrets: inherit`. If a required secret isn't set
+in the caller, the workflow fails fast with a clear error.
+
+Per-secret consumer map:
+
+| Secret | Used by |
+|--------|---------|
+| `AZURE_DEVOPS_PAT` | `publish-nuget.yml`, `actions/setup-nuget-private-feed` |
+| `NUGET_USER` | `publish-nuget.yml` (optional; required only when `push-to-nuget-org: true`) |
 
 ## Versioning
 
-- Annotated semver tags: `v1.0.0`, `v1.1.0`, ...
-- Floating major tag (`v1`) moved forward on each non-breaking release.
+- Annotated semver tags: `v1.0.0`, `v1.1.0`, …
+- Floating major tag (`v1`) moves forward on each non-breaking release.
 - Breaking changes bump the major version and are documented in `CHANGELOG.md`.
+- Input/output rename or removal is a breaking change; additions are not.
 
 ## Access
 
-Repository Actions access is set to "Accessible from repositories in the
-`VION-IoT` organization." Both public and private VION-IoT repos can invoke
-the workflows defined here. Secrets stay with the caller (per-repo), passed
-in via `secrets: inherit`.
+Actions access policy: **"Accessible from repositories in the `VION-IoT`
+organization"**. Both private and public VION-IoT repos can invoke the
+workflows defined here.
