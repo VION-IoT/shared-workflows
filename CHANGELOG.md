@@ -5,6 +5,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 Versioning is semver on the reusable-workflow/composite-action contract:
 input/output rename or removal is a breaking change, additions are not.
 
+## v1.2.0 — 2026-05-12
+
+### Added
+
+- **`actions/docker-tags`** — new `release-only` input (default `'false'`). When `'true'`, omits the non-release tags (`main`, `main-{sha7}`, `manual-{sha7}`); only semver + `latest` are emitted. Used for Docker Hub pushes where only released versions should land. Additive, backward-compatible — existing callers default to the full VION scheme.
+
 ## v1.1.0 — 2026-05-12
 
 ### Added
