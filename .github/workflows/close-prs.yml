@@ -1,0 +1,14 @@
+name: Close external PRs (caller)
+# This repository dogfoods its own close-external-prs reusable workflow.
+# Sibling file close-external-prs.yml is the reusable workflow (workflow_call);
+# this file is its caller, triggered on pull_request_target.
+
+on:
+  pull_request_target:
+    types: [opened]
+
+jobs:
+  close:
+    uses: ./.github/workflows/close-external-prs.yml
+    permissions:
+      pull-requests: write

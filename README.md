@@ -1,8 +1,12 @@
 # VION-IoT shared workflows
 
-Private repository hosting reusable GitHub Actions workflows and composite
-actions consumed by VION-IoT repos. Centralizes pipeline logic so release,
-deploy, and policy concerns evolve in one place.
+Source-available repository (Apache 2.0) hosting reusable GitHub Actions
+workflows and composite actions consumed by VION-IoT repos. Centralizes
+pipeline logic so release, deploy, and policy concerns evolve in one place.
+
+External contributions are not accepted — see
+[CONTRIBUTING.md](CONTRIBUTING.md), [SUPPORT.md](SUPPORT.md), and
+[SECURITY.md](SECURITY.md).
 
 For cross-repo context see
 [`architecture/systems/shared-workflows.md`](https://github.com/VION-IoT/architecture/blob/main/systems/shared-workflows.md).
