@@ -5,6 +5,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 Versioning is semver on the reusable-workflow/composite-action contract:
 input/output rename or removal is a breaking change, additions are not.
 
+## v1.2.1 — 2026-05-12
+
+### Fixed
+
+- **`actions/setup-nuget-private-feed`** — `shell: bash` → `shell: sh`. Bash isn't installed in Alpine images like `mcr.microsoft.com/dotnet/sdk:10.0-alpine`, which caused `mesh`'s `publish-amd64` job (running with `container:` at job level) to fail with `OCI runtime exec failed: exec: "bash": executable file not found in $PATH`. The script is already POSIX-compliant; only the shell declaration changed.
+
 ## v1.2.0 — 2026-05-12
 
 ### Added
