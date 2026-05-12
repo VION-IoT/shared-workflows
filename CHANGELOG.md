@@ -5,6 +5,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 Versioning is semver on the reusable-workflow/composite-action contract:
 input/output rename or removal is a breaking change, additions are not.
 
+## v1.1.0 — 2026-05-12
+
+### Added
+
+- **`actions/compute-deploy-tag`** — composite action that derives a tag suitable for AKS deploys from `$GITHUB_REF`. Outputs `tag` = `"X.Y.Z"` on stable tag pushes, `"main-{sha7}"` on main pushes, empty otherwise. Replaces the 7-line bash block currently duplicated in `documentation.yml`, `dashboard.yml`, `website.yml`, and `contact-proxy.yml`. Additive only — existing workflows unaffected.
+
 ## v1.0.1 — 2026-05-12
 
 ### Changed

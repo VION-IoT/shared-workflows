@@ -1,0 +1,34 @@
+name: Compute deploy tag
+description: |
+  Derives a tag suitable for AKS deploys from $GITHUB_REF:
+    - stable vX.Y.Z tag push   -> "X.Y.Z"
+    - push to main             -> "main-{sha7}"
+    - everything else          -> "" (empty string)
+
+  Pre-release tags (containing "-") return empty so they don't accidentally
+  bump production. workflow_dispatch and pull_request also return empty.
+
+  Tag-only by design: passing a full image ref like
+  vionimages.azurecr.io/<repo>:<tag> as an output runs into GitHub's
+  "skip output containing secret" mechanism when the registry's short
+  name (e.g. "vionimages") matches a secret's value. Callers should
+  assemble the full ref inline in the consumer's `with:` block.
+
+outputs:
+  tag:
+    description: Resolved deploy tag, or empty string for non-deploying events
+    value: ${{ steps.compute.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    - id: compute
+      shell: bash
+      run: |
+        if [[ "$GITHUB_REF" == refs/tags/v* && ! "$GITHUB_REF" == *-* ]]; then
+          echo "tag=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        elif [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" == push ]]; then
+          echo "tag=main-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+        else
+          echo "tag=" >> "$GITHUB_OUTPUT"
+        fi
