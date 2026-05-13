@@ -1,12 +1,17 @@
 name: Publish NuGet
 # Reusable workflow: build + pack a .NET solution, push intermediate
 # packages to the VION private feed, and (on a vX.Y.Z tag) push to
-# nuget.org via Trusted Publishing (OIDC).
+# nuget.org with a long-lived API key.
 #
 # Caller is responsible for:
-#   - holding AZURE_DEVOPS_PAT and NUGET_USER secrets
+#   - holding AZURE_DEVOPS_PAT and NUGET_API_KEY secrets
 #   - passing `secrets: inherit` (or naming each secret explicitly)
-#   - granting `id-token: write` and `contents: read` permissions
+#   - granting `contents: read` permission
+#
+# Note: nuget.org Trusted Publishing does not currently work with
+# reusable workflows because the OIDC `job_workflow_ref` claim points
+# at this repo, not the caller's. See community discussion #179952.
+# Using an API key is the pragmatic workaround until that is fixed.
 
 on:
   workflow_call:
@@ -31,16 +36,15 @@ on:
     secrets:
       AZURE_DEVOPS_PAT:
         required: true
-      NUGET_USER:
+      NUGET_API_KEY:
         required: false
-        description: nuget.org username for Trusted Publishing OIDC handshake
+        description: nuget.org API key. Required when push-to-nuget-org is true and the run is on a vX.Y.Z tag.
 
 jobs:
   pack:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # required for nuget.org Trusted Publishing (OIDC)
     outputs:
       version: ${{ steps.version.outputs.version }}
       is_release: ${{ steps.version.outputs.is_release }}
@@ -75,22 +79,12 @@ jobs:
           --api-key ${{ secrets.AZURE_DEVOPS_PAT }}
           --skip-duplicate
 
-      # Trusted Publishing: request a short-lived API key via OIDC.
-      # Temp key is valid for 1 hour, so do this immediately before push.
-      # NOTE: `user:` must be an individual nuget.org username, not the org name.
-      - name: NuGet login (OIDC)
-        if: inputs.push-to-nuget-org && steps.version.outputs.is_release == 'true'
-        id: nuget-login
-        uses: NuGet/login@v1
-        with:
-          user: ${{ secrets.NUGET_USER }}
-
       - name: Push to nuget.org
         if: inputs.push-to-nuget-org && steps.version.outputs.is_release == 'true'
         run: >
           dotnet nuget push "${{ inputs.pack-output }}/*.nupkg"
           --source https://api.nuget.org/v3/index.json
-          --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          --api-key ${{ secrets.NUGET_API_KEY }}
           --skip-duplicate
 
       - uses: actions/upload-artifact@v4
