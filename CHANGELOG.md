@@ -5,6 +5,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 Versioning is semver on the reusable-workflow/composite-action contract:
 input/output rename or removal is a breaking change, additions are not.
 
+## v1.3.0 — 2026-05-13
+
+### Changed
+
+- **`publish-nuget.yml`** — nuget.org push switched from Trusted Publishing (OIDC) to a long-lived API key. Trusted Publishing does not currently work with reusable workflows: the OIDC `job_workflow_ref` claim points at this repo, not the caller's, and nuget.org rejects the token exchange with `No matching trust policy owned by user 'X' was found`. See [community discussion #179952](https://github.com/orgs/community/discussions/179952). **Breaking** for the secret contract: callers now pass `NUGET_API_KEY` instead of `NUGET_USER`, and no longer need `id-token: write` permission. Re-evaluate when nuget.org adds reusable-workflow support.
+
 ## v1.2.1 — 2026-05-12
 
 ### Fixed
