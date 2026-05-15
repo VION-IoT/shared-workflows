@@ -1,0 +1,25 @@
+# Authoritative line-ending policy. Overrides each contributor's local
+# core.autocrlf / core.eol so endings are identical on every machine,
+# and matches this repo's .editorconfig (LF everywhere).
+* text=auto eol=lf
+
+# Windows batch scripts stay CRLF (cmd.exe can mishandle LF).
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets: no EOL conversion, no text diff.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary
+*.dll  binary
+*.exe  binary
+*.snk  binary
