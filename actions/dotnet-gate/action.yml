@@ -1,0 +1,68 @@
+name: .NET gate (build + test + style)
+description: |
+  The VION .NET code gate, packaged as a composite so the exact same steps can run
+  either standalone (the `dotnet-ci.yml` reusable workflow, for PR gates and
+  no-publish repos) or inline before packing/publishing (`publish-nuget.yml`,
+  reusing the one build). Keeping it a composite — not a second reusable workflow —
+  is what lets pack/publish reuse this build instead of spinning up a fresh runner.
+
+  Steps: build the solution, run tests (`--no-build`), then verify code style by
+  running the caller's `scripts/cleanup-code.ps1 -Verify -NoBuild` (ReSharper
+  `cleanupcode` — the single source of truth shared by devs, agents, cleanup-on-save,
+  and CI, so local and CI can't diverge).
+
+  The caller is responsible for running `actions/checkout` and `actions/setup-dotnet`
+  first (plus `setup-nuget-private-feed` when the solution restores from the private
+  feed), and for providing `scripts/cleanup-code.ps1`, `.config/dotnet-tools.json`,
+  and a `.sln.DotSettings` cleanup profile (see the `dale` repo for a reference setup).
+
+inputs:
+  solution:
+    description: Path to the .sln/.slnx (relative to repo root)
+    required: true
+  configuration:
+    description: Build configuration — Debug for CI, Release when the caller will pack the same build
+    required: false
+    default: Debug
+  version:
+    description: Optional version; when set, passed to the build as -p:Version=<version> so pack --no-build can reuse it
+    required: false
+    default: ''
+  run-tests:
+    description: Run `dotnet test` after the build
+    required: false
+    default: 'true'
+  test-filter:
+    description: >
+      Optional VSTest --filter expression. Empty (default) runs all tests. Use to keep
+      environment-dependent tests out of the gate, e.g. 'FullyQualifiedName!~IntegrationTest'.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Build
+      shell: bash
+      env:
+        SOLUTION: ${{ inputs.solution }}
+        CONFIGURATION: ${{ inputs.configuration }}
+        VERSION: ${{ inputs.version }}
+      run: dotnet build "$SOLUTION" -c "$CONFIGURATION" ${VERSION:+-p:Version=$VERSION}
+
+    - name: Test
+      if: ${{ inputs.run-tests == 'true' }}
+      shell: bash
+      env:
+        SOLUTION: ${{ inputs.solution }}
+        CONFIGURATION: ${{ inputs.configuration }}
+        FILTER: ${{ inputs.test-filter }}
+      run: dotnet test "$SOLUTION" -c "$CONFIGURATION" --no-build ${FILTER:+--filter "$FILTER"}
+
+    # The same cleanup devs/agents run before a PR (scripts/cleanup-code.ps1, or the
+    # /cleanup command), in verify mode (fails on drift). Single source of truth, so
+    # local and CI never diverge. -NoBuild reuses the Build step above; the script
+    # restores the pinned `jb` tool from the caller's .config/dotnet-tools.json itself.
+    - name: Verify code style (jb cleanupcode)
+      shell: pwsh
+      run: ./scripts/cleanup-code.ps1 -Verify -NoBuild

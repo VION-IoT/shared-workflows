@@ -1,9 +1,15 @@
 name: .NET CI
-# Reusable workflow: build + test a .NET solution and verify code style. The style
-# check runs the caller's `scripts/cleanup-code.ps1 -Verify` — the single source of
-# truth that devs/agents run locally (via /cleanup) and ReSharper/Rider apply on save —
-# so local and CI can never diverge. The pinned `jb` tool is restored from the caller's
-# `.config/dotnet-tools.json`; the cleanup profile lives in the caller's `.sln.DotSettings`.
+# Reusable workflow: build + test a .NET solution and verify code style. The actual
+# build/test/style steps live in the `actions/dotnet-gate` composite; this workflow is
+# the standalone-job wrapper around it (for PR gates and repos that don't publish).
+# publish-nuget.yml runs the *same* composite inline before packing, so the PR gate and
+# the pre-publish gate can never drift.
+#
+# The style check runs the caller's `scripts/cleanup-code.ps1 -Verify` — the single
+# source of truth that devs/agents run locally (via /cleanup) and ReSharper/Rider apply
+# on save — so local and CI can never diverge. The pinned `jb` tool is restored from the
+# caller's `.config/dotnet-tools.json`; the cleanup profile lives in the caller's
+# `.sln.DotSettings`.
 #
 # Caller is responsible for:
 #   - having `scripts/cleanup-code.ps1`, `.config/dotnet-tools.json`, and a
@@ -32,6 +38,11 @@ on:
         type: boolean
         default: true
         description: Run `dotnet test` after the build
+      test-filter:
+        required: false
+        type: string
+        default: ''
+        description: Optional VSTest --filter (e.g. 'FullyQualifiedName!~IntegrationTest' to skip integration tests)
     secrets:
       AZURE_DEVOPS_PAT:
         required: false
@@ -54,20 +65,10 @@ jobs:
         with:
           pat: ${{ secrets.AZURE_DEVOPS_PAT }}
 
-      - name: Restore tools
-        run: dotnet tool restore
-
-      - name: Build
-        run: dotnet build ${{ inputs.solution }}
-
-      - name: Test
-        if: ${{ inputs.run-tests }}
-        run: dotnet test ${{ inputs.solution }} --no-build
-
-      # The same cleanup devs/agents run before a PR (scripts/cleanup-code.ps1, or the
-      # /cleanup command), in verify mode (fails on drift). Single source of truth, so
-      # local and CI never diverge. -NoBuild reuses the Build step above.
-      - name: Verify code style (jb cleanupcode)
-        shell: pwsh
-        timeout-minutes: 10
-        run: ./scripts/cleanup-code.ps1 -Verify -NoBuild
+      # Build + test + verify code style. Same composite publish-nuget.yml runs
+      # before packing, so the standalone PR gate and the pre-publish gate are identical.
+      - uses: VION-IoT/shared-workflows/actions/dotnet-gate@v1
+        with:
+          solution: ${{ inputs.solution }}
+          run-tests: ${{ inputs.run-tests }}
+          test-filter: ${{ inputs.test-filter }}
