@@ -5,6 +5,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 Versioning is semver on the reusable-workflow/composite-action contract:
 input/output rename or removal is a breaking change, additions are not.
 
+## v1.5.0 — 2026-06-05
+
+### Added
+
+- **`actions/dotnet-gate`** — new composite action holding the .NET gate steps (build → test → verify code style via the caller's `scripts/cleanup-code.ps1 -Verify -NoBuild`). Packaged as a composite (not a second reusable workflow) so the *same* steps can run standalone for PR gates **and** inline before packing, reusing the one build. Inputs: `solution` (required), `configuration` (default `Debug`), `version`, `run-tests` (default `true`), `test-filter` (optional VSTest `--filter`, e.g. `FullyQualifiedName!~IntegrationTest` to keep environment-dependent tests out of the gate).
+- **`publish-nuget.yml`** — new optional `gate` input (boolean, default `false`). When `true`, runs `actions/dotnet-gate` (Release) in the pack job before `dotnet pack --no-build`, so a release can't ship with failing tests or style drift and the gate adds no extra build. Requires the caller to provide `scripts/cleanup-code.ps1`, `.config/dotnet-tools.json`, and a `.sln.DotSettings` cleanup profile. A companion `test-filter` input forwards a VSTest `--filter` to the gate. Additive — default-off, existing consumers unaffected.
+
+### Changed
+
+- **`dotnet-ci.yml`** — refactored to a thin wrapper that delegates its build/test/style steps to the new `actions/dotnet-gate` composite. Adds one optional `test-filter` input (forwarded to the composite); otherwise no change to the `on.workflow_call` input/secret contract, so consumers (`dale`) are unaffected. The PR gate and `publish-nuget.yml`'s pre-publish gate now share one definition and can't drift.
+
 ## v1.4.0 — 2026-06-05
 
 ### Added

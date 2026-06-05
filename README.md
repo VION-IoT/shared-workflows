@@ -17,8 +17,8 @@ For cross-repo context see
 
 | Workflow | Purpose |
 |----------|---------|
-| `publish-nuget.yml` | .NET build + pack + push to private feed and (on stable tag) nuget.org with API key |
-| `dotnet-ci.yml` | .NET build + test + verify code style (ReSharper cleanupcode via the caller's `scripts/cleanup-code.ps1`) on PRs |
+| `publish-nuget.yml` | .NET build + pack + push to private feed and (on stable tag) nuget.org with API key. Optional `gate: true` runs the build/test/style gate before packing (one build) |
+| `dotnet-ci.yml` | .NET build + test + verify code style on PRs. Thin wrapper around the `dotnet-gate` composite (the shared gate) |
 | `deploy-aks.yml` | OIDC Azure login → AKS context → `kubectl set image` → rollout wait |
 | `close-external-prs.yml` | Auto-close PRs from forks (source-available repos) |
 
@@ -26,6 +26,7 @@ For cross-repo context see
 
 | Action | Purpose |
 |--------|---------|
+| `dotnet-gate` | The .NET gate (build + test + ReSharper cleanupcode style verify); run standalone by `dotnet-ci.yml` or inline by `publish-nuget.yml` so the one build is reused |
 | `compute-version` | Derive `version` + `is_release` from `$GITHUB_REF` |
 | `setup-nuget-private-feed` | Register the VION internal NuGet feed; URL hidden inside the action and masked in logs |
 | `docker-tags` | Wrap `docker/metadata-action` with the VION tag scheme |

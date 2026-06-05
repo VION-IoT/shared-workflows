@@ -3,10 +3,16 @@ name: Publish NuGet
 # packages to the VION private feed, and (on a vX.Y.Z tag) push to
 # nuget.org with a long-lived API key.
 #
+# With `gate: true`, runs the shared build + test + style gate
+# (actions/dotnet-gate) in the same job before packing — one build, and a
+# release can't ship with failing tests or style drift. Off by default.
+#
 # Caller is responsible for:
 #   - holding AZURE_DEVOPS_PAT and NUGET_API_KEY secrets
 #   - passing `secrets: inherit` (or naming each secret explicitly)
 #   - granting `contents: read` permission
+#   - when `gate: true`: providing scripts/cleanup-code.ps1,
+#     .config/dotnet-tools.json, and a .sln.DotSettings cleanup profile
 #
 # Note: nuget.org Trusted Publishing does not currently work with
 # reusable workflows because the OIDC `job_workflow_ref` claim points
@@ -33,6 +39,24 @@ on:
         type: boolean
         default: true
         description: Push to nuget.org on stable (vX.Y.Z) tag pushes
+      gate:
+        required: false
+        type: boolean
+        default: false
+        description: >
+          Run the build + test + style gate (actions/dotnet-gate) before packing, in
+          the same job so pack reuses the one build and a release can't ship with failing
+          tests or style drift. Requires the caller to provide scripts/cleanup-code.ps1,
+          .config/dotnet-tools.json, and a .sln.DotSettings cleanup profile (see `dale`).
+          Off by default so existing consumers are unaffected.
+      test-filter:
+        required: false
+        type: string
+        default: ''
+        description: >
+          Optional VSTest --filter applied to the gate's `dotnet test` (only when gate is
+          true). Use to keep environment-dependent tests out of the release gate, e.g.
+          'FullyQualifiedName!~IntegrationTest'.
     secrets:
       AZURE_DEVOPS_PAT:
         required: true
@@ -62,7 +86,18 @@ jobs:
         with:
           pat: ${{ secrets.AZURE_DEVOPS_PAT }}
 
+      # gate: true → build + test + style in one job; pack below reuses this Release build.
+      - if: ${{ inputs.gate }}
+        uses: VION-IoT/shared-workflows/actions/dotnet-gate@v1
+        with:
+          solution: ${{ inputs.solution }}
+          configuration: Release
+          version: ${{ steps.version.outputs.version }}
+          test-filter: ${{ inputs.test-filter }}
+
+      # gate: false (default) → plain build, unchanged behavior for existing consumers.
       - name: Build
+        if: ${{ !inputs.gate }}
         run: dotnet build "${{ inputs.solution }}" -c Release -p:Version=${{ steps.version.outputs.version }}
 
       - name: Pack
