@@ -1,0 +1,73 @@
+name: .NET CI
+# Reusable workflow: build + test a .NET solution and verify code style. The style
+# check runs the caller's `scripts/cleanup-code.ps1 -Verify` — the single source of
+# truth that devs/agents run locally (via /cleanup) and ReSharper/Rider apply on save —
+# so local and CI can never diverge. The pinned `jb` tool is restored from the caller's
+# `.config/dotnet-tools.json`; the cleanup profile lives in the caller's `.sln.DotSettings`.
+#
+# Caller is responsible for:
+#   - having `scripts/cleanup-code.ps1`, `.config/dotnet-tools.json`, and a
+#     `.sln.DotSettings` cleanup profile (see the `dale` repo for a reference setup)
+#   - holding AZURE_DEVOPS_PAT and passing `secrets: inherit` when `private-feed: true`
+#   - granting `contents: read`
+
+on:
+  workflow_call:
+    inputs:
+      solution:
+        required: true
+        type: string
+        description: Path to the .sln/.slnx (relative to repo root)
+      dotnet-version:
+        required: false
+        type: string
+        default: '10.0.x'
+      private-feed:
+        required: false
+        type: boolean
+        default: false
+        description: Register the VION private NuGet feed before restore (needs AZURE_DEVOPS_PAT)
+      run-tests:
+        required: false
+        type: boolean
+        default: true
+        description: Run `dotnet test` after the build
+    secrets:
+      AZURE_DEVOPS_PAT:
+        required: false
+        description: Azure DevOps PAT with package read access; required when private-feed is true
+
+jobs:
+  build-test-style:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - if: ${{ inputs.private-feed }}
+        uses: VION-IoT/shared-workflows/actions/setup-nuget-private-feed@v1
+        with:
+          pat: ${{ secrets.AZURE_DEVOPS_PAT }}
+
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Build
+        run: dotnet build ${{ inputs.solution }}
+
+      - name: Test
+        if: ${{ inputs.run-tests }}
+        run: dotnet test ${{ inputs.solution }} --no-build
+
+      # The same cleanup devs/agents run before a PR (scripts/cleanup-code.ps1, or the
+      # /cleanup command), in verify mode (fails on drift). Single source of truth, so
+      # local and CI never diverge. -NoBuild reuses the Build step above.
+      - name: Verify code style (jb cleanupcode)
+        shell: pwsh
+        timeout-minutes: 10
+        run: ./scripts/cleanup-code.ps1 -Verify -NoBuild

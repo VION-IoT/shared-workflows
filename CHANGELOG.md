@@ -5,6 +5,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 Versioning is semver on the reusable-workflow/composite-action contract:
 input/output rename or removal is a breaking change, additions are not.
 
+## v1.4.0 — 2026-06-05
+
+### Added
+
+- **`dotnet-ci.yml`** — new reusable workflow: build + test a .NET solution and verify code style by running the caller's `scripts/cleanup-code.ps1 -Verify` (ReSharper `cleanupcode` — the single source of truth shared by devs, agents, cleanup-on-save, and CI, so local and CI can't diverge). Inputs: `solution` (required), `dotnet-version`, `private-feed`, `run-tests`; optional `AZURE_DEVOPS_PAT` secret (required when `private-feed: true`). First consumer: `dale`. Additive, backward-compatible.
+
 ## v1.3.0 — 2026-05-13
 
 ### Changed
