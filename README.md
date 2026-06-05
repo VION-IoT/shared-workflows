@@ -18,6 +18,7 @@ For cross-repo context see
 | Workflow | Purpose |
 |----------|---------|
 | `publish-nuget.yml` | .NET build + pack + push to private feed and (on stable tag) nuget.org with API key |
+| `dotnet-ci.yml` | .NET build + test + verify code style (ReSharper cleanupcode via the caller's `scripts/cleanup-code.ps1`) on PRs |
 | `deploy-aks.yml` | OIDC Azure login → AKS context → `kubectl set image` → rollout wait |
 | `close-external-prs.yml` | Auto-close PRs from forks (source-available repos) |
 
@@ -66,7 +67,7 @@ Per-secret consumer map:
 
 | Secret | Used by |
 |--------|---------|
-| `AZURE_DEVOPS_PAT` | `publish-nuget.yml`, `actions/setup-nuget-private-feed` |
+| `AZURE_DEVOPS_PAT` | `publish-nuget.yml`, `dotnet-ci.yml`, `actions/setup-nuget-private-feed` |
 | `NUGET_API_KEY` | `publish-nuget.yml` (optional; required only when `push-to-nuget-org: true`) |
 
 ## Versioning
