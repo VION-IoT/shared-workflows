@@ -43,6 +43,14 @@ on:
         type: string
         default: ''
         description: Optional VSTest --filter (e.g. 'FullyQualifiedName!~IntegrationTest' to skip integration tests)
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+        description: >-
+          Runner for the build/test/style job. A single label string (e.g. 'ubuntu-latest', or a
+          self-hosted label), or a JSON array of labels (e.g. '["self-hosted","linux"]') for
+          multi-label self-hosted targeting. Defaults to 'ubuntu-latest' — unchanged for existing callers.
     secrets:
       AZURE_DEVOPS_PAT:
         required: false
@@ -50,7 +58,9 @@ on:
 
 jobs:
   build-test-style:
-    runs-on: ubuntu-latest
+    # A plain label (default 'ubuntu-latest') is used as-is; a JSON array string like
+    # '["self-hosted","linux"]' is parsed into a label array for multi-label self-hosted targeting.
+    runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
     permissions:
       contents: read
     steps:
