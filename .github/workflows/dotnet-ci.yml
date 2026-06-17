@@ -63,16 +63,16 @@ jobs:
     runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
     permissions:
       contents: read
-    # Install .NET into a writable, runner-local dir. Self-hosted runners frequently can't write the
-    # system default (/usr/share/dotnet, C:\Program Files\dotnet), which makes actions/setup-dotnet fail
-    # before the build even starts; runner.temp is always writable. Harmless on hosted runners (same
-    # install, different dir) and what makes the parametrizable runs-on above usable on self-hosted.
-    env:
-      DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-dotnet@v4
+        # Install .NET into a writable, runner-local dir. Self-hosted runners frequently can't write the
+        # system default (/usr/share/dotnet, C:\Program Files\dotnet), which makes setup-dotnet fail before
+        # the build starts; runner.temp is always writable, and setup-dotnet adds it to PATH for later steps.
+        # Set at step level: the runner context is not available in job-level env.
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 
