@@ -26,6 +26,10 @@ runs:
       run: |
         URL="https://pkgs.dev.azure.com/ecocoachsmarthome/Ecocoach/_packaging/ecocoach.csharplogicsystem/nuget/v3/index.json"
         echo "::add-mask::$URL"
+        # Idempotent: on a self-hosted runner the source persists in the user NuGet.Config between jobs, so a
+        # bare `add` fails with "already added". Remove any existing source of this name first (ignore if absent),
+        # then add it fresh with the current PAT. On a clean hosted runner the remove is a harmless no-op.
+        dotnet nuget remove source "$SOURCE_NAME" >/dev/null 2>&1 || true
         dotnet nuget add source "$URL" \
           --name "$SOURCE_NAME" \
           --username AzureDevOps \
