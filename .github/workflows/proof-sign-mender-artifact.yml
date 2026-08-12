@@ -148,3 +148,6 @@ jobs:
           Write-Host $unasked
           if ($LASTEXITCODE -eq 0) { throw 'validate with no key succeeded; it must not.' }
           Write-Host 'Correct key validates; unrelated key is rejected; no key is refused.'
+          # Actions' pwsh wrapper ends every step with `exit $LASTEXITCODE`, which is still the
+          # non-zero code from the rejections this step exists to require. Leave deliberately.
+          exit 0

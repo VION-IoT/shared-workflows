@@ -100,3 +100,6 @@ jobs:
               throw "dotnet test failed, but not with the expected VSTest routing error."
           }
           Write-Host 'Confirmed: dotnet test routes to legacy VSTest and fails on this shape.'
+          # Actions' pwsh wrapper ends every step with `exit $LASTEXITCODE`, which is still the
+          # non-zero code from the command this step exists to watch fail. Leave deliberately.
+          exit 0
