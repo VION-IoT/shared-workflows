@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <RootNamespace>Vion.Fixture.WindowsService.Tests</RootNamespace>
+        <IsPackable>false</IsPackable>
+        <!-- The shape that makes `dotnet test` the wrong command: MSTest runs under
+             Microsoft.Testing.Platform, the test project IS the test host, and on the SDKs the
+             fleet uses `dotnet test` still routes through the legacy VSTest target. Mirrors
+             vion-agent-windows/tests/Vion.Agent.Windows.Tests. The lane's `test-command` input
+             exists because of this. -->
+        <OutputType>Exe</OutputType>
+        <EnableMSTestRunner>true</EnableMSTestRunner>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="MSTest" Version="4.2.3" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="../../src/Vion.Fixture.WindowsService/Vion.Fixture.WindowsService.csproj" />
+    </ItemGroup>
+
+</Project>

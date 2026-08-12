@@ -22,6 +22,24 @@ For cross-repo context see
 | `deploy-aks.yml` | OIDC Azure login → AKS context → `kubectl set image` → rollout wait |
 | `close-external-prs.yml` | Auto-close PRs from forks (source-available repos) |
 
+#### The Windows lane
+
+Four workflows for the Windows gateway platform
+(`specs/in-flight/2026-08-06-cx5130-windows-gateway.md`). They are separate from the Linux .NET
+workflows above because the failure modes are different, not because the language is.
+
+| Workflow | Purpose |
+|----------|---------|
+| `dotnet-win-x64.yml` | Build a solution, run a **caller-supplied** test command, publish one project self-contained for `win-x64`. RID is fixed, not an input — the fleet is all 64-bit |
+| `vendored-go-build.yml` | Run a caller's vendored-Go build script with `core.longpaths=true` set before checkout, Go on PATH, and `nopkcs11` in `GOFLAGS` |
+| `sign-mender-artifact.yml` | Sign a `.mender` with an ECDSA **P-256** key from the caller's secret store, then verify. Defaults to a Linux runner — `mender-artifact sign` is broken on Windows |
+| `mender-conformance.yml` | Run a caller-supplied round-trip executable against a live Mender server, with an endpoint-reachability preflight. `workflow_call` only; the caller owns the `schedule` / `workflow_dispatch` triggers |
+
+Each has a `proof-*.yml` caller in this repository that exercises it against a fixture under
+[`tests/fixtures/`](tests/fixtures/) — a `net10.0-windows` solution shaped like
+`vion-agent-windows`, and a vendored-Go build script that uses the same upstream pin. The proofs
+are the regression tests for these workflows; read them before changing an input contract.
+
 ### Composite actions (`actions/`)
 
 | Action | Purpose |
@@ -70,6 +88,8 @@ Per-secret consumer map:
 |--------|---------|
 | `AZURE_DEVOPS_PAT` | `publish-nuget.yml`, `dotnet-ci.yml`, `actions/setup-nuget-private-feed` |
 | `NUGET_API_KEY` | `publish-nuget.yml` (optional; required only when `push-to-nuget-org: true`) |
+| `ARTIFACT_SIGNING_KEY` | `sign-mender-artifact.yml` — PEM EC **P-256** private key. Custody is the artifact pipeline's CI secret store; it is never stored here |
+| `DEVICE_ID_OVERRIDE` | `mender-conformance.yml` — identifier of the dedicated CI device identity, never a fleet gateway's |
 
 ## Versioning
 

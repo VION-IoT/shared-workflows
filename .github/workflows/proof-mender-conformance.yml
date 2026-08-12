@@ -1,0 +1,70 @@
+name: Proof — Mender conformance template
+# In-repo proof for the reusable workflow `mender-conformance.yml`, composed with
+# `dotnet-win-x64.yml`, which publishes the win-x64 executable the template then runs as its
+# round-trip. That composition is the real caller shape: build the agent, hand the template the
+# artifact.
+#
+# What this proof can and cannot show
+# -----------------------------------
+# It cannot round-trip against the Mender test server. Staging a deployment goes through the
+# management API, which is IP-whitelisted at the Traefik edge; the only runners with a route in
+# are the org's self-hosted WireGuard peers, and every one of them is Linux while the round-trip
+# executable is win-x64. See the reachability section in the template's header.
+#
+# So the round-trip here is `Vion.Fixture.WindowsService conformance-probe`, which asserts the one
+# thing the template is responsible for: that the executable is launched with the caller's
+# endpoint configuration and the dedicated CI device identity present in its environment, under
+# the caller's own variable names. Everything past that is the agent's contract with the server,
+# not this repository's.
+#
+# The template's preflight probe still runs, against `vars.MENDER_TEST_URL` when the repository
+# defines it. It is non-gating by design, so the proof stays green either way and the job summary
+# records what was actually reachable from this runner — which is the evidence the whitelist
+# question wants.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mender-conformance.yml'
+      - '.github/workflows/proof-mender-conformance.yml'
+      - '.github/workflows/dotnet-win-x64.yml'
+      - 'tests/fixtures/dotnet-win-x64/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  round-trip-executable:
+    name: Publish the stand-in round-trip executable
+    uses: ./.github/workflows/dotnet-win-x64.yml
+    with:
+      solution: tests/fixtures/dotnet-win-x64/WindowsServiceFixture.slnx
+      publish-project: tests/fixtures/dotnet-win-x64/src/Vion.Fixture.WindowsService/Vion.Fixture.WindowsService.csproj
+      artifact-name: conformance-round-trip
+
+  conformance:
+    name: Run the conformance template
+    needs: round-trip-executable
+    uses: ./.github/workflows/mender-conformance.yml
+    with:
+      artifact-name: conformance-round-trip
+      executable: ./Vion.Fixture.WindowsService.exe
+      arguments: conformance-probe
+      # The hostname is not written into this public repository. When the platform team sets the
+      # MENDER_TEST_URL repository variable, the preflight starts reporting real reachability;
+      # until then it reports "no answer" against a reserved-invalid name, which still exercises
+      # the probe.
+      mender-server-url: ${{ vars.MENDER_TEST_URL || 'https://mender.test.invalid' }}
+      environment: |
+        FIXTURE_REQUIRED_VARIABLES=VION_FIXTURE_MENDER_URL,VION_FIXTURE_DEVICE_ID
+        VION_FIXTURE_MENDER_URL=${{ vars.MENDER_TEST_URL || 'https://mender.test.invalid' }}
+      # Undefaulted in the template on purpose — the configuration key belongs to the caller's
+      # agent. vion-agent-windows' is VION_AGENT_Agent__Identity__DeviceIdOverride.
+      device-id-environment-variable: VION_FIXTURE_DEVICE_ID
+      timeout-minutes: 10
+    secrets:
+      # A synthetic identifier, not a fleet device: a conformance run reports deployment status to
+      # the server under whatever identity it authenticates as, so it must never borrow a real
+      # gateway's. A real caller passes its CI device identity from its own secret store.
+      DEVICE_ID_OVERRIDE: ci-proof-00000-00000-00001-vion-beckhoff-cx5130

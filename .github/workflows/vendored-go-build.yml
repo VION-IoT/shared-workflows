@@ -1,0 +1,139 @@
+name: Vendored Go build
+# Reusable workflow: provide the environment a vendored Go tool needs on a Windows runner, then
+# run the caller's own vendor-build script. Built for `vion-agent-windows`'s
+# `build/build-mender-artifact.ps1`, which clones upstream `mender-artifact` at a pinned tag,
+# applies its carried patches, and cross-compiles a `win-x64` companion executable.
+#
+# The vendoring recipe (pin, patches, output layout) stays in the consuming repo — it is that
+# repo's reproducibility contract, not CI's. What CI owes it is three things that are easy to get
+# wrong and fail in ways that do not name their cause:
+#
+#   1. **`core.longpaths=true`, set globally BEFORE checkout.** Upstream's `vendor/` tree contains
+#      paths past MAX_PATH. Without this, `git checkout` fails partway with `Filename too long`
+#      and leaves a tree that looks present and does not compile — the failure surfaces later, as
+#      a Go build error about missing packages. Setting it globally (not just on the caller's own
+#      checkout) also covers every clone the build script itself performs.
+#   2. **Go on PATH**, asserted rather than assumed, so a runner without it fails here with a
+#      clear message instead of inside the caller's script.
+#   3. **The `nopkcs11` build tag**, exported through `GOFLAGS`. It is upstream's own Windows and
+#      macOS configuration: it swaps in `artifact/signer_nopkcs11.go` and drops the
+#      `mendersoftware/openssl` cgo binding, which is what makes the tool pure Go — no C
+#      toolchain, no OpenSSL, no mingw. A `-tags` passed explicitly on the script's own `go build`
+#      command line wins over GOFLAGS, so a script that already sets it is unaffected.
+#
+# Caller is responsible for:
+#   - the build script itself (pin, patches, `go build` invocation, output verification)
+#   - granting `contents: read`
+
+on:
+  workflow_call:
+    inputs:
+      script:
+        required: true
+        type: string
+        description: pwsh script to run, relative to the repo root (e.g. build/build-mender-artifact.ps1)
+      script-arguments:
+        required: false
+        type: string
+        default: ''
+        description: Arguments appended to the script invocation (e.g. '-Clean')
+      go-version:
+        required: false
+        type: string
+        default: '1.24.x'
+      goos:
+        required: false
+        type: string
+        default: 'windows'
+      goarch:
+        required: false
+        type: string
+        default: 'amd64'
+      cgo-enabled:
+        required: false
+        type: string
+        default: '0'
+        description: CGO_ENABLED for the build. '0' with the nopkcs11 tag is what removes the C toolchain requirement.
+      build-tags:
+        required: false
+        type: string
+        default: 'nopkcs11'
+        description: >-
+          Go build tags, exported as GOFLAGS=-tags=<value>. Empty exports nothing. Default keeps
+          mender-artifact pure Go; see the header.
+      output-path:
+        required: false
+        type: string
+        default: ''
+        description: Glob of build outputs to upload (required when artifact-name is set)
+      artifact-name:
+        required: false
+        type: string
+        default: ''
+        description: When set, output-path is uploaded as a workflow artifact under this name
+      runs-on:
+        required: false
+        type: string
+        default: 'windows-latest'
+        description: >-
+          Runner for the build job. A single label string, or a JSON-array string of labels for
+          multi-label self-hosted targeting.
+
+jobs:
+  build:
+    runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      # Before checkout, and global rather than repo-local: see header note 1.
+      - name: Enable git long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          Write-Host "core.longpaths = $(git config --global core.longpaths)"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      # setup-go puts the toolchain on PATH, but a self-hosted runner with a warm tool cache can
+      # take a different path through the action. Assert it here so a missing toolchain fails with
+      # its own name on it rather than inside the caller's script.
+      - name: Assert Go is on PATH
+        shell: pwsh
+        run: |
+          if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
+              throw 'go is not on PATH after actions/setup-go.'
+          }
+          go version
+
+      - name: Run the vendor build script
+        shell: pwsh
+        env:
+          GOOS: ${{ inputs.goos }}
+          GOARCH: ${{ inputs.goarch }}
+          CGO_ENABLED: ${{ inputs.cgo-enabled }}
+          BUILD_SCRIPT: ${{ inputs.script }}
+          SCRIPT_ARGUMENTS: ${{ inputs.script-arguments }}
+          BUILD_TAGS: ${{ inputs.build-tags }}
+        run: |
+          if ($env:BUILD_TAGS) {
+              $env:GOFLAGS = "-tags=$env:BUILD_TAGS"
+              Write-Host "GOFLAGS = $env:GOFLAGS"
+          }
+          Write-Host "GOOS=$env:GOOS GOARCH=$env:GOARCH CGO_ENABLED=$env:CGO_ENABLED"
+          $command = "& '$env:BUILD_SCRIPT' $env:SCRIPT_ARGUMENTS"
+          $global:LASTEXITCODE = 0
+          Write-Host "> $command"
+          Invoke-Expression $command
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload build output
+        if: ${{ inputs.artifact-name != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.output-path }}
+          if-no-files-found: error

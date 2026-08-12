@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Vion.Fixture.WindowsService/Vion.Fixture.WindowsService.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Vion.Fixture.WindowsService.Tests/Vion.Fixture.WindowsService.Tests.csproj" />
+  </Folder>
+</Solution>

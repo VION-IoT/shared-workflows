@@ -1,0 +1,216 @@
+name: Sign Mender artifact
+# Reusable workflow: sign a `.mender` artifact with the fleet artifact-signing key and verify the
+# signature took. The signing primitive of the VION Windows CI lane
+# (specs/in-flight/2026-08-06-cx5130-windows-gateway.md § Component 2).
+#
+# ## The key is ECDSA P-256, and that is checked before signing
+#
+# `mender-artifact`'s ECDSA signer is *typed*: `ECDSA256`. Hand it a P-384 key — the curve
+# step-ca issues for the VION **device** key, which sits right next to this one in the design —
+# and it fails at signing time with `signer: invalid ecdsa curve size`, a message that never
+# mentions curves and sends you looking at key *formats*. The two keys are two curves and must
+# never be conflated:
+#
+#   | key                    | curve       | fixed by                             |
+#   |------------------------|-------------|--------------------------------------|
+#   | device key             | EC P-384    | step-ca (`vion-commission`)          |
+#   | artifact signing key   | EC P-256    | `mender-artifact`'s ECDSA256 signer  |
+#
+# So this workflow parses the key first and fails with a message that names the curve it actually
+# got. That check is the difference between a five-minute fix and an afternoon.
+#
+# ## Custody
+#
+# The private key never lives in this repository. It arrives as the caller's `signing-key` secret
+# (custody: the artifact pipeline's CI secret store), is written to `RUNNER_TEMP` with owner-only
+# permissions for the duration of the signing step, and is deleted in an `always()` step.
+#
+# ## Why the default runner is Linux
+#
+# `mender-artifact sign` — signing an artifact that already exists — **does not work on Windows**,
+# with the stock tool or with `vion-agent-windows`'s patched build. `cli.CopyOwner` copies the
+# input file's owner onto the temporary output via `windows.SetSecurityInfo(...,
+# OWNER_SECURITY_INFORMATION, ...)`, but the handle `os.CreateTemp` returns was opened without
+# `WRITE_OWNER`, so the call is denied and the CLI reports:
+#
+#     Could not set owner/group of signed artifact (needs root privileges)   [exit 1]
+#
+# Measured on `mender-artifact` 4.4.1 / windows-amd64, 2026-08-12. It is an upstream defect
+# distinct from the two path-separator patches `vion-agent-windows` already carries, and no
+# privilege level fixes it — the access right is missing from the handle, not from the token.
+#
+# `.mender` bytes are platform-neutral and the artifact pipeline's runners are Linux today, so
+# signing on Linux is the pipeline's actual shape rather than a workaround. `runs-on` is an input
+# for callers who need otherwise; on Windows this workflow will fail at the sign step until
+# upstream is fixed. The alternative that does work on Windows is signing at *write* time
+# (`mender-artifact write ... -k <key>`), which is a build concern, not a signing one.
+#
+# Caller is responsible for:
+#   - uploading a workflow artifact containing the `.mender` (and, if not on PATH, the
+#     `mender-artifact` executable) before calling this workflow
+#   - holding the P-256 signing key as a secret and passing it as `signing-key`
+#   - granting `contents: read`
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        required: true
+        type: string
+        description: Workflow artifact to download; must contain the .mender to sign
+      mender-glob:
+        required: false
+        type: string
+        default: '*.mender'
+        description: Glob matching exactly one .mender inside the downloaded artifact
+      mender-artifact:
+        required: false
+        type: string
+        default: 'mender-artifact'
+        description: >-
+          The mender-artifact executable. A bare name is resolved on PATH; a relative path is
+          resolved inside the downloaded artifact (e.g. './mender-artifact' or
+          './out/mender-artifact.exe'). Downloaded executables lose their exec bit, so this
+          workflow restores it on non-Windows runners.
+      signed-artifact-name:
+        required: false
+        type: string
+        default: ''
+        description: Name for the uploaded signed artifact. Defaults to '<artifact-name>-signed'.
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+        description: >-
+          Runner for the signing job. A single label string, or a JSON-array string of labels.
+          Defaults to Linux — `mender-artifact sign` is broken on Windows; see the header.
+    secrets:
+      ARTIFACT_SIGNING_KEY:
+        required: true
+        description: PEM-encoded EC P-256 private key. Never P-384 — see the header.
+
+jobs:
+  sign:
+    runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - name: Download the artifact to sign
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: incoming
+
+      # Parse the key before touching the artifact, so a wrong-curve key fails with a message that
+      # says so. Also derives the public key, which the verification step below needs and which is
+      # otherwise an extra secret to carry around.
+      - name: Validate the signing key and stage it
+        shell: pwsh
+        env:
+          SIGNING_KEY: ${{ secrets.ARTIFACT_SIGNING_KEY }}
+        run: |
+          $expectedCurveOid  = '1.2.840.10045.3.1.7'   # nistP256 / prime256v1 — mender-artifact's ECDSA256
+          $expectedKeyBits   = 256
+
+          $key = [System.Security.Cryptography.ECDsa]::Create()
+          try {
+              $key.ImportFromPem($env:SIGNING_KEY)
+          }
+          catch {
+              throw ("The signing key could not be read as an EC private key. mender-artifact's " +
+                     "ECDSA signer is typed ECDSA256 and requires an EC P-256 key. Underlying " +
+                     "error: $($_.Exception.Message)")
+          }
+
+          $curve = $key.ExportParameters($false).Curve
+          $curveName = if ($curve.Oid.FriendlyName) { $curve.Oid.FriendlyName } else { $curve.Oid.Value }
+          if ($curve.Oid.Value -ne $expectedCurveOid -or $key.KeySize -ne $expectedKeyBits) {
+              throw ("The signing key is EC $curveName ($($key.KeySize)-bit). mender-artifact's " +
+                     "signer is typed ECDSA256 and rejects every other curve with " +
+                     "'signer: invalid ecdsa curve size', which does not mention curves. Supply " +
+                     "an EC P-256 key — the P-384 device key can never double as the artifact " +
+                     "signing key.")
+          }
+          Write-Host "Signing key: EC $curveName ($($key.KeySize)-bit) — accepted."
+
+          $privatePath = Join-Path $env:RUNNER_TEMP 'artifact-signing-key.pem'
+          $publicPath  = Join-Path $env:RUNNER_TEMP 'artifact-signing-key.pub'
+          Set-Content -Path $privatePath -Value $env:SIGNING_KEY
+          Set-Content -Path $publicPath  -Value $key.ExportSubjectPublicKeyInfoPem()
+          if (-not $IsWindows) { chmod 600 $privatePath }
+
+          "SIGNING_KEY_PATH=$privatePath"       | Out-File $env:GITHUB_ENV -Append
+          "SIGNING_PUBLIC_KEY_PATH=$publicPath" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Resolve the artifact and the tool
+        shell: pwsh
+        env:
+          MENDER_GLOB: ${{ inputs.mender-glob }}
+          MENDER_ARTIFACT: ${{ inputs.mender-artifact }}
+        run: |
+          $candidates = @(Get-ChildItem -Path 'incoming' -Recurse -File -Filter $env:MENDER_GLOB)
+          if ($candidates.Count -ne 1) {
+              throw ("Expected exactly one file matching '$env:MENDER_GLOB' in the downloaded " +
+                     "artifact, found $($candidates.Count): $($candidates.FullName -join ', ')")
+          }
+          $artifact = $candidates[0].FullName
+          Write-Host "Artifact to sign: $artifact"
+
+          # A relative path points inside the download; a bare name is resolved on PATH.
+          $tool = $env:MENDER_ARTIFACT
+          $candidate = Join-Path 'incoming' $tool
+          if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+              $tool = (Resolve-Path -LiteralPath $candidate).Path
+              # upload-artifact does not preserve the executable bit.
+              if (-not $IsWindows) { chmod +x $tool }
+          }
+          elseif (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw "mender-artifact '$env:MENDER_ARTIFACT' is neither a file in the downloaded artifact nor on PATH."
+          }
+          & $tool --version
+          if ($LASTEXITCODE -ne 0) { throw "'$tool --version' exited $LASTEXITCODE." }
+
+          "ARTIFACT_TO_SIGN=$artifact" | Out-File $env:GITHUB_ENV -Append
+          "MENDER_ARTIFACT_TOOL=$tool" | Out-File $env:GITHUB_ENV -Append
+
+      # -o writes beside the input rather than replacing it, so a re-run of the job is not
+      # signing an already-signed artifact (which the tool refuses without --force).
+      - name: Sign
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path 'signed' | Out-Null
+          $signed = Join-Path 'signed' (Split-Path -Leaf $env:ARTIFACT_TO_SIGN)
+          & $env:MENDER_ARTIFACT_TOOL sign -k $env:SIGNING_KEY_PATH -o $signed $env:ARTIFACT_TO_SIGN
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "SIGNED_ARTIFACT=$signed" | Out-File $env:GITHUB_ENV -Append
+
+      # The tool's own verifier, against the public key derived from the signing key. Note for
+      # Windows callers: `validate` walks the payload file list, which stock mender-artifact cannot
+      # do on Windows — that needs the reader patch `vion-agent-windows` carries.
+      - name: Verify the signature
+        shell: pwsh
+        run: |
+          & $env:MENDER_ARTIFACT_TOOL validate -k $env:SIGNING_PUBLIC_KEY_PATH $env:SIGNED_ARTIFACT
+          if ($LASTEXITCODE -ne 0) {
+              throw "Signature verification of '$env:SIGNED_ARTIFACT' failed with exit $LASTEXITCODE."
+          }
+          "### Signed Mender artifact"                                     | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          ""                                                               | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "- artifact: ``$(Split-Path -Leaf $env:SIGNED_ARTIFACT)``"       | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "- signing key: EC P-256"                                        | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "- verified with: ``mender-artifact validate``"                  | Out-File $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Remove the signing key
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($path in @($env:SIGNING_KEY_PATH, $env:SIGNING_PUBLIC_KEY_PATH)) {
+              if ($path -and (Test-Path -LiteralPath $path)) { Remove-Item -Force -LiteralPath $path }
+          }
+
+      - name: Upload the signed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.signed-artifact-name != '' && inputs.signed-artifact-name || format('{0}-signed', inputs.artifact-name) }}
+          path: signed/*
+          if-no-files-found: error

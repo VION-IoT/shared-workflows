@@ -1,0 +1,243 @@
+name: Mender conformance round-trip
+# Reusable workflow: run a caller-supplied round-trip executable against a live Mender server and
+# fail the job if it does not complete. The conformance half of the VION Windows CI lane
+# (specs/in-flight/2026-08-06-cx5130-windows-gateway.md § Component 1).
+#
+# ## Why this exists, and why "regenerate and build" is not it
+#
+# The Mender device client is generated from the published OpenAPI documents. That defends against
+# the server's *shape* changing and does nothing about its *encoding*: spike S-1 hit three
+# wire-fidelity defects against a completely stable server, and all three compiled perfectly.
+# `{"status":"Downloading"}` is a valid C# program and a `400 Invalid Request`. A job that
+# regenerates the client and builds it catches none of them. Conformance therefore means
+# exercising the real endpoints — and because a regeneration can quietly undo a correction, it has
+# to keep doing so on a schedule and on every server upgrade, not once.
+#
+# ## Reachability — read this before scheduling it
+#
+# A full round-trip has two halves and they are reachable from different places:
+#
+#   - **The device API** (`/api/devices/*`) is mTLS-gated at the Traefik edge but is *not*
+#     IP-whitelisted. Authenticate, inventory, deployment poll, status and log reporting are all
+#     reachable from an ordinary GitHub-hosted runner.
+#   - **The management API** (`/api/management/*`, and `/api/internal/*`, `/ui/*`) is
+#     **IP-whitelisted** at the edge. Staging a round-trip — opening the commissioning request,
+#     uploading the artifact, creating the deployment — goes through it. So does any assertion
+#     made by reading the server's view of the result.
+#
+# `artifacts-mender` passes that whitelist by running on the org's self-hosted runners, which are
+# headless WireGuard peers (labels `self-hosted, vpn, mender-artifact`); their traffic SNATs to
+# the hub WireGuard VM, which is what the Traefik IP-whitelist middleware allows. GitHub-hosted
+# runners have no route in.
+#
+# **That mechanism does not transfer to this workflow as it stands: every runner in that fleet is
+# Linux** (3× x64, 2× ARM64, verified 2026-08-12), and the round-trip executable is `win-x64`.
+# Until a Windows self-hosted runner joins the VPN peer set, a scheduled run of this template can
+# exercise the device-API half against a device that was staged out of band, but cannot stage its
+# own deployment. The preflight step below probes both halves and writes the result into the job
+# summary, so a run that is silently only testing half the contract says so.
+#
+# Provisioning that runner, or any other route through the whitelist, belongs to
+# `environments-iac` — not to this repository and not to its callers.
+#
+# ## Triggers
+#
+# This is `workflow_call` only. The caller owns the triggers; the spec asks for
+# `schedule` + `workflow_dispatch`:
+#
+#     on:
+#       schedule:    [{ cron: '17 3 * * *' }]
+#       workflow_dispatch:
+#     jobs:
+#       conformance:
+#         uses: VION-IoT/shared-workflows/.github/workflows/mender-conformance.yml@v1
+#         with:
+#           artifact-name: round-trip-win-x64
+#           executable: ./vion-agent-spike.exe
+#           arguments: run
+#           mender-server-url: https://mender.test.vion.swiss
+#           device-id-environment-variable: VION_AGENT_Agent__Identity__DeviceIdOverride
+#         secrets: inherit
+#
+# Caller is responsible for:
+#   - uploading a workflow artifact containing the round-trip executable before calling this
+#   - holding the dedicated CI device identity as a secret and passing it as `DEVICE_ID_OVERRIDE`
+#   - granting `contents: read`
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        required: true
+        type: string
+        description: Workflow artifact to download; must contain the round-trip executable
+      executable:
+        required: true
+        type: string
+        description: Path to the round-trip executable inside the downloaded artifact (e.g. ./vion-agent-spike.exe)
+      arguments:
+        required: false
+        type: string
+        default: ''
+        description: Arguments passed to the executable (e.g. 'run')
+      mender-server-url:
+        required: true
+        type: string
+        description: >-
+          Base URL of the TEST Mender server. Used for the reachability preflight and the run
+          summary. The executable reads its own endpoints from `environment` below — this
+          workflow does not presume the caller's configuration keys.
+      environment:
+        required: false
+        type: string
+        default: ''
+        description: >-
+          Endpoint and runtime configuration for the executable, one NAME=value per line. The
+          caller names its own variables; nothing here is interpreted. Example:
+          'VION_AGENT_Agent__Mender__ServerUrl=https://mender.test.vion.swiss'.
+      device-id-environment-variable:
+        required: true
+        type: string
+        description: >-
+          Name of the environment variable the DEVICE_ID_OVERRIDE secret is exported as. Required
+          and undefaulted on purpose: the configuration key belongs to the caller's agent, not to
+          this workflow. For `vion-agent-windows` it is
+          `VION_AGENT_Agent__Identity__DeviceIdOverride`.
+      timeout-minutes:
+        required: false
+        type: number
+        default: 30
+        description: Hard cap on the round-trip. A deployment poll that never resolves must fail, not hang.
+      logs-artifact-name:
+        required: false
+        type: string
+        default: 'mender-conformance-logs'
+      runs-on:
+        required: false
+        type: string
+        default: 'windows-latest'
+        description: >-
+          Runner for the conformance job. A single label string, or a JSON-array string of labels.
+          See the reachability section in the header before changing it.
+    secrets:
+      DEVICE_ID_OVERRIDE:
+        required: true
+        description: >-
+          Device identifier for the dedicated CI device identity. A CI round-trip must never run
+          under a real gateway's identifier — it reports deployment status to the server under
+          whatever identity it authenticates as.
+
+jobs:
+  conformance:
+    runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    steps:
+      - name: Download the round-trip executable
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: round-trip
+
+      # Probe both halves and record what was actually reachable. A run that can talk to the
+      # device API but not the management API is testing half the contract; that has to be visible
+      # in the summary rather than inferred from a confusing failure twenty minutes later.
+      - name: Preflight — what is reachable from this runner
+        shell: pwsh
+        env:
+          MENDER_SERVER_URL: ${{ inputs.mender-server-url }}
+        run: |
+          $probeTimeoutSeconds = 15
+          # Traefik's IP-whitelist middleware answers a blocked source with 403 before Mender ever
+          # sees the request, so "the edge answered" is not the same as "we are allowed in". Only
+          # the whitelisted routes can produce 403 that way; read it as blocked there.
+          $forbidden = 403
+          $probes = @(
+              @{ Half            = 'device API (mTLS-gated, not IP-whitelisted)'
+                 Path            = '/api/devices/v1/authentication/auth_requests'
+                 ForbiddenMeans  = 'reachable, rejected by Mender' }
+              @{ Half            = 'management API (IP-whitelisted)'
+                 Path            = '/api/management/v1/deviceauth/devices'
+                 ForbiddenMeans  = 'BLOCKED by the edge IP-whitelist — this runner is not in the VPN peer set' }
+          )
+
+          $rows = foreach ($probe in $probes) {
+              $uri = ($env:MENDER_SERVER_URL.TrimEnd('/')) + $probe.Path
+              try {
+                  $response = Invoke-WebRequest -Uri $uri -Method Head -SkipHttpErrorCheck `
+                                                -TimeoutSec $probeTimeoutSeconds
+                  $status = [int]$response.StatusCode
+                  $verdict = if ($status -eq $forbidden) { $probe.ForbiddenMeans } else { 'reachable' }
+                  [pscustomobject]@{ Half = $probe.Half; Result = "$verdict (HTTP $status)" }
+              }
+              catch {
+                  [pscustomobject]@{ Half = $probe.Half; Result = "NO ANSWER — $($_.Exception.Message)" }
+              }
+          }
+
+          "### Mender conformance preflight"                                | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          ""                                                                | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "Server: ``$env:MENDER_SERVER_URL`` — runner: ``${{ runner.os }}/${{ runner.name }}``" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          ""                                                                | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "| half | result |"                                               | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "|---|---|"                                                       | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          foreach ($row in $rows) {
+              "| $($row.Half) | $($row.Result) |"                           | Out-File $env:GITHUB_STEP_SUMMARY -Append
+              Write-Host "$($row.Half): $($row.Result)"
+          }
+          ""                                                                | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "The management API is IP-whitelisted at the Traefik edge; only runners inside the VPN peer set reach it." |
+              Out-File $env:GITHUB_STEP_SUMMARY -Append
+
+          # Deliberately not a gate. The round-trip executable is the gate — it knows which halves
+          # it needs. This step exists so its failure is legible.
+
+      - name: Run the round-trip
+        shell: pwsh
+        working-directory: round-trip
+        env:
+          EXECUTABLE: ${{ inputs.executable }}
+          ARGUMENTS: ${{ inputs.arguments }}
+          CALLER_ENVIRONMENT: ${{ inputs.environment }}
+          DEVICE_ID_VARIABLE: ${{ inputs.device-id-environment-variable }}
+          DEVICE_ID_OVERRIDE: ${{ secrets.DEVICE_ID_OVERRIDE }}
+        run: |
+          $logPath = Join-Path $env:RUNNER_TEMP 'mender-conformance.log'
+          "CONFORMANCE_LOG=$logPath" | Out-File $env:GITHUB_ENV -Append
+
+          foreach ($line in ($env:CALLER_ENVIRONMENT -split "`n")) {
+              $entry = $line.Trim()
+              if (-not $entry -or $entry.StartsWith('#')) { continue }
+              $separator = $entry.IndexOf('=')
+              if ($separator -lt 1) { throw "environment line is not NAME=value: '$entry'" }
+              $name  = $entry.Substring(0, $separator).Trim()
+              $value = $entry.Substring($separator + 1)
+              Set-Item -Path "env:$name" -Value $value
+              Write-Host "env $name set"
+          }
+
+          # The dedicated CI device identity. Set last so it cannot be shadowed by `environment`.
+          Set-Item -Path "env:$($env:DEVICE_ID_VARIABLE)" -Value $env:DEVICE_ID_OVERRIDE
+          Write-Host "env $($env:DEVICE_ID_VARIABLE) set from the DEVICE_ID_OVERRIDE secret"
+
+          if (-not (Test-Path -LiteralPath $env:EXECUTABLE)) {
+              throw "Round-trip executable '$env:EXECUTABLE' not found in artifact '${{ inputs.artifact-name }}'."
+          }
+          if (-not $IsWindows) { chmod +x $env:EXECUTABLE }   # upload-artifact drops the exec bit
+
+          $arguments = @($env:ARGUMENTS -split '\s+' | Where-Object { $_ })
+          Write-Host "> $env:EXECUTABLE $($arguments -join ' ')"
+          $global:LASTEXITCODE = 0
+          & $env:EXECUTABLE @arguments 2>&1 | Tee-Object -FilePath $logPath
+          $exitCode = $LASTEXITCODE
+          Write-Host "round-trip exited $exitCode"
+          if ($exitCode -ne 0) { exit $exitCode }
+
+      - name: Upload the round-trip log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.logs-artifact-name }}
+          path: ${{ env.CONFORMANCE_LOG }}
+          if-no-files-found: warn

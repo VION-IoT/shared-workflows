@@ -1,0 +1,102 @@
+name: Proof — .NET win-x64 publish
+# In-repo proof for the reusable workflow `dotnet-win-x64.yml`. It builds, tests and publishes the
+# fixture under tests/fixtures/dotnet-win-x64/, which is shaped like `vion-agent-windows`:
+# net10.0-windows, win-x64, and an MSTest project that runs under Microsoft.Testing.Platform.
+#
+# Three things are asserted, in three jobs:
+#   1. the lane itself completes (it runs the caller's test command, and the fixture's tests fail
+#      the job if they fail);
+#   2. what came out is a self-contained win-x64 executable that runs and says so;
+#   3. `dotnet test` — the command this lane deliberately does NOT hardcode — really does fail on
+#      this project shape. Without job 3 the `test-command` input looks like a preference.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/dotnet-win-x64.yml'
+      - '.github/workflows/proof-dotnet-win-x64.yml'
+      - 'tests/fixtures/dotnet-win-x64/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lane:
+    name: Run the lane against the fixture
+    uses: ./.github/workflows/dotnet-win-x64.yml
+    with:
+      solution: tests/fixtures/dotnet-win-x64/WindowsServiceFixture.slnx
+      publish-project: tests/fixtures/dotnet-win-x64/src/Vion.Fixture.WindowsService/Vion.Fixture.WindowsService.csproj
+      # The command vion-agent-windows has to use, for the reason job `hardcoded-dotnet-test`
+      # below demonstrates.
+      test-command: dotnet run --project tests/fixtures/dotnet-win-x64/tests/Vion.Fixture.WindowsService.Tests/Vion.Fixture.WindowsService.Tests.csproj -c Release --no-build
+      version: 1.2.3
+      artifact-name: fixture-win-x64-publish
+
+  assert-publish:
+    name: Assert the publish is self-contained win-x64
+    needs: lane
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fixture-win-x64-publish
+          path: publish
+
+      - name: The published executable runs and reports win-x64
+        shell: pwsh
+        run: |
+          $output = & ./publish/Vion.Fixture.WindowsService.exe
+          Write-Host $output
+          if ($output -notmatch 'rid=win-x64') { throw "Expected 'rid=win-x64' in: $output" }
+          if ($output -notmatch 'arch=X64')    { throw "Expected 'arch=X64' in: $output" }
+
+      - name: The publish carries its own runtime
+        shell: pwsh
+        run: |
+          # A framework-dependent publish is a handful of files and no runtime host; a
+          # self-contained one brings hostfxr and the framework assemblies with it. Gateways have
+          # no shared .NET runtime, so this is the property that matters.
+          $required = @('hostfxr.dll', 'System.Private.CoreLib.dll', 'Vion.Fixture.WindowsService.exe')
+          foreach ($name in $required) {
+              if (-not (Test-Path -LiteralPath (Join-Path 'publish' $name))) {
+                  throw "Self-contained publish is missing '$name'."
+              }
+          }
+          Write-Host "Publish contains $((Get-ChildItem publish -Recurse -File).Count) files."
+
+  hardcoded-dotnet-test:
+    name: Assert `dotnet test` would fail on this project shape
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Put dotnet on PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value '${{ runner.temp }}/dotnet'
+
+      # This is the justification for the `test-command` input, kept honest as a test rather than
+      # left as a comment. If a future SDK makes `dotnet test` work on this shape, this job fails
+      # and the input's rationale gets revisited on purpose.
+      - name: dotnet test must fail with the VSTest message
+        shell: pwsh
+        working-directory: tests/fixtures/dotnet-win-x64
+        run: |
+          $log = dotnet test WindowsServiceFixture.slnx -c Release 2>&1 | Out-String
+          Write-Host $log
+          if ($LASTEXITCODE -eq 0) {
+              throw ("`dotnet test` succeeded on a Microsoft.Testing.Platform project. The " +
+                     "`test-command` input of dotnet-win-x64.yml exists because it does not — " +
+                     "re-check that rationale before deleting this job.")
+          }
+          if ($log -notmatch 'Testing with VSTest target is no longer supported') {
+              throw "dotnet test failed, but not with the expected VSTest routing error."
+          }
+          Write-Host 'Confirmed: dotnet test routes to legacy VSTest and fails on this shape.'
