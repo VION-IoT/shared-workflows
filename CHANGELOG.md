@@ -7,6 +7,8 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+## v1.6.0 — 2026-08-12
+
 ### Added
 
 The Windows CI lane for the CX5130 gateway platform
