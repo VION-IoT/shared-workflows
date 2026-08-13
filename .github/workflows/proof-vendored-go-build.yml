@@ -1,0 +1,71 @@
+name: Proof — vendored Go build
+# In-repo proof for the reusable workflow `vendored-go-build.yml`. It runs
+# tests/fixtures/vendored-go/build-mender-artifact.ps1, which uses the same recipe
+# `vion-agent-windows/build/build-mender-artifact.ps1` does — upstream mender-artifact at the
+# pinned tag 4.4.1, cross-compiled for win-x64.
+#
+# The fixture is written so the two things the workflow supplies are load-bearing rather than
+# decorative, and the proof fails if either stops arriving:
+#   - it never sets `core.longpaths` itself, and clones into a path long enough that upstream's
+#     deepest vendor/ entry lands past MAX_PATH (asserted after checkout);
+#   - it never passes `-tags` on its own `go build`, so the build depends on the workflow's
+#     GOFLAGS. Without `nopkcs11` the build pulls in the mendersoftware/openssl cgo binding and
+#     fails under CGO_ENABLED=0.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/vendored-go-build.yml'
+      - '.github/workflows/proof-vendored-go-build.yml'
+      - 'tests/fixtures/vendored-go/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lane:
+    name: Build the vendored tool for win-x64
+    uses: ./.github/workflows/vendored-go-build.yml
+    with:
+      script: tests/fixtures/vendored-go/build-mender-artifact.ps1
+      output-path: artifacts/mender-artifact/mender-artifact.exe
+      artifact-name: fixture-mender-artifact-win-x64
+
+  assert:
+    name: Assert the tool is a working win-x64 binary
+    needs: lane
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fixture-mender-artifact-win-x64
+          path: tool
+
+      - name: The tool runs and reports the pinned version
+        shell: pwsh
+        run: |
+          $pinnedTag = '4.4.1'
+          $reported = & ./tool/mender-artifact.exe --version
+          Write-Host $reported
+          if ($reported -notmatch [regex]::Escape($pinnedTag)) {
+              throw "Built binary reports '$reported', which does not carry the pinned tag '$pinnedTag'."
+          }
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+
+      - name: The binary itself says it is pure Go, win-x64, nopkcs11
+        shell: pwsh
+        run: |
+          # Go embeds the build settings in the binary and `-ldflags "-s -w"` does not strip them,
+          # so the toolchain can be asked directly instead of guessing from the import table.
+          $expected = @('-tags=nopkcs11', 'CGO_ENABLED=0', 'GOOS=windows', 'GOARCH=amd64')
+          $buildInfo = (& go version -m ./tool/mender-artifact.exe | Out-String)
+          Write-Host ($buildInfo -split "`n" | Select-String -Pattern '^\s+build' | Out-String)
+          foreach ($setting in $expected) {
+              if ($buildInfo -notmatch [regex]::Escape($setting)) {
+                  throw "Build info does not carry '$setting'. CGO_ENABLED=0 without nopkcs11 would not have built at all; a cgo build would not be portable."
+              }
+          }

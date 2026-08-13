@@ -1,0 +1,197 @@
+name: .NET win-x64 publish
+# Reusable workflow: build a .NET solution, run a CALLER-SUPPLIED test command, and produce a
+# self-contained `win-x64` publish of one project. The Windows-service half of the VION Windows
+# CI lane (specs/in-flight/2026-08-06-cx5130-windows-gateway.md).
+#
+# Why this is not `dotnet-ci.yml` with a different runner:
+#
+#   - **The test command is the caller's, not ours.** `vion-agent-windows` runs its tests with
+#     `dotnet run --project <test.csproj>`: the test project is an executable
+#     (`EnableMSTestRunner`, Microsoft.Testing.Platform) and on that SDK `dotnet test` still
+#     routes through the legacy VSTest target and fails outright with
+#     `Testing with VSTest target is no longer supported`. A workflow that hardcodes
+#     `dotnet test` cannot build that repo at all, so the command is an input.
+#   - **The output is a self-contained publish, not a NuGet package.** A Windows gateway has no
+#     shared .NET runtime to rely on; every service ships its own.
+#   - **No ReSharper style gate.** `actions/dotnet-gate` runs the caller's
+#     `scripts/cleanup-code.ps1`; that is orthogonal to publishing and callers that want it can
+#     run `dotnet-ci.yml` alongside this workflow.
+#
+# The runtime identifier is fixed at `win-x64` and is deliberately NOT an input: the CX5130 fleet
+# is all 64-bit LTSC 2019/2021 (spec reviewer question 4, and `vion-agent-windows`'s own
+# Directory.Build.props), so there is no `win-x86` path anywhere and none should be reachable by
+# passing a string.
+#
+# Caller is responsible for:
+#   - a solution that restores from public feeds only (the VION private feed is not wired here —
+#     see the PR that introduced this workflow; add it when a consumer needs it)
+#   - granting `contents: read`
+
+on:
+  workflow_call:
+    inputs:
+      solution:
+        required: true
+        type: string
+        description: Path to the .sln/.slnx to build (relative to repo root)
+      publish-project:
+        required: true
+        type: string
+        description: Path to the .csproj to publish self-contained (relative to repo root)
+      test-command:
+        required: false
+        type: string
+        default: ''
+        description: >-
+          Command to run the tests, executed with pwsh in the repo root. Empty (default) skips
+          testing. This is a command, not a filter: `vion-agent-windows` needs
+          'dotnet run --project tests/Vion.Agent.Windows.Tests/Vion.Agent.Windows.Tests.csproj'
+          because `dotnet test` routes to legacy VSTest on its SDK and fails.
+      configuration:
+        required: false
+        type: string
+        default: 'Release'
+      dotnet-version:
+        required: false
+        type: string
+        default: '10.0.x'
+      version:
+        required: false
+        type: string
+        default: ''
+        description: When set, passed to build and publish as -p:Version=<version>
+      self-contained:
+        required: false
+        type: boolean
+        default: true
+        description: Publish self-contained (the fleet default — gateways carry no shared runtime)
+      publish-output:
+        required: false
+        type: string
+        default: './publish'
+      artifact-name:
+        required: false
+        type: string
+        default: ''
+        description: When set, the publish output is uploaded as a workflow artifact under this name
+      runs-on:
+        required: false
+        type: string
+        default: 'windows-latest'
+        description: >-
+          Runner for the build/test/publish job. A single label string, or a JSON-array string of
+          labels (e.g. '["self-hosted","windows","x64"]') for multi-label self-hosted targeting.
+          Must be a Windows runner — the publish targets win-x64 and callers' TFMs are
+          `net10.0-windows`.
+    outputs:
+      publish-path:
+        description: Path to the publish output directory, relative to the workspace
+        value: ${{ inputs.publish-output }}
+
+# The one place the fleet's runtime identifier is written down. See the header.
+env:
+  RUNTIME_IDENTIFIER: win-x64
+
+jobs:
+  build-test-publish:
+    # A plain label (default 'windows-latest') is used as-is; a JSON-array string like
+    # '["self-hosted","windows","x64"]' is parsed into a label array for self-hosted targeting.
+    runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        # Install .NET into a writable, runner-local dir. Self-hosted runners frequently can't
+        # write the system default (C:\Program Files\dotnet), which makes setup-dotnet fail before
+        # the build starts; runner.temp is always writable. Set at step level: the runner context
+        # is not available in job-level env.
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      # setup-dotnet only adds a custom DOTNET_INSTALL_DIR to PATH on a FRESH install. A
+      # self-hosted runner that doesn't wipe runner.temp between jobs finds a cached SDK, skips
+      # the install — and skips the PATH add — so dotnet drops off PATH for later steps. Add it
+      # explicitly so the lane is deterministic.
+      - name: Put dotnet on PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value '${{ runner.temp }}/dotnet'
+
+      # No `-r` here: `dotnet build <solution> -r <rid>` is rejected outright with NETSDK1134
+      # ("Building a solution with a specific RuntimeIdentifier is not supported"). The RID belongs
+      # to the projects — `vion-agent-windows` sets it in Directory.Build.props — and the publish
+      # step below applies it where it is legal to.
+      - name: Build
+        shell: pwsh
+        env:
+          SOLUTION: ${{ inputs.solution }}
+          CONFIGURATION: ${{ inputs.configuration }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          $arguments = @('build', $env:SOLUTION, '-c', $env:CONFIGURATION)
+          if ($env:VERSION) { $arguments += "-p:Version=$env:VERSION" }
+          Write-Host "> dotnet $($arguments -join ' ')"
+          & dotnet @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # The caller's command, verbatim. Passed through the environment rather than interpolated
+      # into the script body so a caller's string cannot rewrite the surrounding pwsh.
+      - name: Test
+        if: ${{ inputs.test-command != '' }}
+        shell: pwsh
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: |
+          $global:LASTEXITCODE = 0
+          Write-Host "> $env:TEST_COMMAND"
+          Invoke-Expression $env:TEST_COMMAND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Deliberately not `--no-build`: a self-contained publish is a different build from the one
+      # above (it pulls the runtime pack and lays out the apphost), so reusing the Build step's
+      # output would either fail or produce a framework-dependent layout. The Build step earns its
+      # keep by failing fast and by letting a caller's test command pass `--no-build`.
+      - name: Publish
+        shell: pwsh
+        env:
+          PUBLISH_PROJECT: ${{ inputs.publish-project }}
+          CONFIGURATION: ${{ inputs.configuration }}
+          VERSION: ${{ inputs.version }}
+          SELF_CONTAINED: ${{ inputs.self-contained }}
+          PUBLISH_OUTPUT: ${{ inputs.publish-output }}
+        run: |
+          $arguments = @(
+              'publish', $env:PUBLISH_PROJECT,
+              '-c', $env:CONFIGURATION,
+              '-r', $env:RUNTIME_IDENTIFIER,
+              "--self-contained:$($env:SELF_CONTAINED)",
+              '-o', $env:PUBLISH_OUTPUT
+          )
+          if ($env:VERSION) { $arguments += "-p:Version=$env:VERSION" }
+          Write-Host "> dotnet $($arguments -join ' ')"
+          & dotnet @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Summarise the publish
+        shell: pwsh
+        env:
+          PUBLISH_OUTPUT: ${{ inputs.publish-output }}
+        run: |
+          $files = Get-ChildItem -Path $env:PUBLISH_OUTPUT -Recurse -File
+          if (-not $files) { throw "Publish produced no files in '$env:PUBLISH_OUTPUT'." }
+          $megabytes = [math]::Round((($files | Measure-Object -Property Length -Sum).Sum / 1MB), 1)
+          "### win-x64 publish"                                   | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          ""                                                      | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "- runtime identifier: ``$env:RUNTIME_IDENTIFIER``"     | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "- files: $($files.Count) (${megabytes} MB)"            | Out-File $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload publish output
+        if: ${{ inputs.artifact-name != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.publish-output }}
+          if-no-files-found: error

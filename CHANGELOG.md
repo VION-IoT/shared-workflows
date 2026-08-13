@@ -5,6 +5,52 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 Versioning is semver on the reusable-workflow/composite-action contract:
 input/output rename or removal is a breaking change, additions are not.
 
+## Unreleased
+
+### Added
+
+The Windows CI lane for the CX5130 gateway platform
+(`specs/in-flight/2026-08-06-cx5130-windows-gateway.md`). Four reusable workflows, each with a
+`proof-*.yml` caller in this repository exercising it against a fixture under `tests/fixtures/`.
+All additive — no existing input, output or secret contract changes.
+
+- **`dotnet-win-x64.yml`** — build a solution, run a **caller-supplied** `test-command`, publish
+  one project self-contained for `win-x64`. The test command is an input rather than
+  `dotnet test` because `vion-agent-windows`'s MSTest projects run under
+  Microsoft.Testing.Platform, where `dotnet test` routes to the legacy VSTest target and fails
+  outright; the proof pins that with a job that asserts `dotnet test` still fails on that shape.
+  The runtime identifier is a workflow constant, not an input — the fleet is all 64-bit LTSC
+  2019/2021 and no `win-x86` path should be reachable by passing a string. Does not wire the VION
+  private feed; no Windows consumer needs it yet and the proof could not exercise it.
+- **`vendored-go-build.yml`** — run a caller's vendored-Go build script with the three things such
+  a build needs and fails opaquely without: `core.longpaths=true` set **globally before checkout**
+  (upstream `mender-artifact`'s `vendor/` tree passes MAX_PATH; without it `git clone` reports
+  `Clone succeeded, but checkout failed` and leaves 8 of 2282 vendor files behind, which then
+  looks like a Go build error), Go on PATH asserted rather than assumed, and `nopkcs11` exported
+  through `GOFLAGS` (without it the build pulls the `mendersoftware/openssl` cgo binding and fails
+  under `CGO_ENABLED=0`). `goos`/`goarch`/`cgo-enabled`/`build-tags` are inputs defaulting to the
+  win-x64 case.
+- **`sign-mender-artifact.yml`** — sign a `.mender` with an ECDSA **P-256** key supplied as the
+  `ARTIFACT_SIGNING_KEY` secret, then verify with `mender-artifact validate`. The key is parsed
+  and its curve checked *before* signing, because `mender-artifact`'s signer is typed `ECDSA256`
+  and rejects every other curve with `signer: invalid ecdsa curve size` — a message that never
+  mentions curves, next to a P-384 device key that looks interchangeable. Key custody stays with
+  the caller: written to `RUNNER_TEMP` owner-only and deleted in an `always()` step.
+  **`runs-on` defaults to `ubuntu-latest`**: `mender-artifact sign` does not work on Windows at
+  all — `cli.CopyOwner` calls `windows.SetSecurityInfo(..., OWNER_SECURITY_INFORMATION, ...)` on a
+  handle `os.CreateTemp` opened without `WRITE_OWNER`, so it always fails with
+  `Could not set owner/group of signed artifact (needs root privileges)`. Measured on 4.4.1
+  windows-amd64 with both the stock tool and `vion-agent-windows`'s patched build; an upstream
+  defect distinct from the two path-separator patches that repo carries.
+- **`mender-conformance.yml`** — run a caller-supplied round-trip executable against a live Mender
+  server under a dedicated CI device identity, with a preflight that probes the device API and the
+  management API separately and records which was reachable. `workflow_call` only; the caller owns
+  the `schedule` + `workflow_dispatch` triggers. Conformance means exercising the real endpoints:
+  a generated client's *encoding* does not follow from the document it was generated from, and
+  `{"status":"Downloading"}` compiles perfectly and returns `400`. **The management API is
+  IP-whitelisted** and the runners that pass it are all Linux, so a win-x64 round-trip cannot
+  currently stage its own deployment from CI — see the workflow header.
+
 ## v1.5.0 — 2026-06-05
 
 ### Added

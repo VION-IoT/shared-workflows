@@ -1,0 +1,6 @@
+# Build output from the in-repo proofs under tests/fixtures/. Nothing here is a source input:
+# the fixtures are rebuilt from scratch by their proof workflows on every run.
+bin/
+obj/
+publish/
+artifacts/

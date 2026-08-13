@@ -1,0 +1,153 @@
+name: Proof — sign a Mender artifact
+# In-repo proof for the reusable workflow `sign-mender-artifact.yml`, composed with
+# `vendored-go-build.yml` (which builds the mender-artifact the signing job uses — the same
+# fixture recipe, targeted at linux/amd64 because signing runs on Linux; see the signing
+# workflow's header for why).
+#
+# The signing key is generated fresh in the `stage` job and handed to the reusable workflow the
+# way a real caller hands over a secret. It is deliberately NOT masked: masked values come out of
+# job outputs as `***`. It is a throwaway P-256 key that exists for the length of one run, signs
+# one 5 KB fixture artifact, and is never trusted by anything. The real key lives in the artifact
+# pipeline's CI secret store and never in this repository.
+#
+# The assertion that matters is the last one: an artifact must FAIL to validate against a
+# different key. A verifier that says yes to everything says nothing.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/sign-mender-artifact.yml'
+      - '.github/workflows/proof-sign-mender-artifact.yml'
+      - '.github/workflows/vendored-go-build.yml'
+      - 'tests/fixtures/vendored-go/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tool:
+    name: Build mender-artifact for the signing runner
+    uses: ./.github/workflows/vendored-go-build.yml
+    with:
+      runs-on: ubuntu-latest
+      goos: linux
+      script: tests/fixtures/vendored-go/build-mender-artifact.ps1
+      output-path: artifacts/mender-artifact/mender-artifact
+      artifact-name: sign-proof-tool
+
+  stage:
+    name: Make an unsigned artifact and an ephemeral P-256 key
+    needs: tool
+    runs-on: ubuntu-latest
+    outputs:
+      signing-key: ${{ steps.key.outputs.private-pem }}
+      public-key: ${{ steps.key.outputs.public-pem }}
+      other-public-key: ${{ steps.key.outputs.other-public-pem }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sign-proof-tool
+          path: stage
+
+      - name: Write an unsigned .mender
+        shell: pwsh
+        working-directory: stage
+        run: |
+          chmod +x ./mender-artifact
+          'vion-noop payload' | Set-Content -NoNewline payload.txt
+          # Relative paths on purpose: upstream's writer applies slash-only path.Base to host
+          # paths, so an absolute Windows path ends up inside the manifest. Harmless on Linux,
+          # but the fixture keeps the habit.
+          & ./mender-artifact write module-image `
+              -T vion-noop -n sign-proof-1.0.0 -t vion-beckhoff-cx5130 `
+              -o unsigned.mender -f payload.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item payload.txt
+
+      - name: Generate the ephemeral keys
+        id: key
+        shell: pwsh
+        run: |
+          $curve = [System.Security.Cryptography.ECCurve+NamedCurves]::nistP256
+          $signing = [System.Security.Cryptography.ECDsa]::Create($curve)
+          $other   = [System.Security.Cryptography.ECDsa]::Create($curve)
+
+          function Add-PemOutput([string] $name, [string] $pem) {
+              $delimiter = "PEM_$([guid]::NewGuid().ToString('N'))"
+              "$name<<$delimiter"  | Out-File $env:GITHUB_OUTPUT -Append
+              $pem                 | Out-File $env:GITHUB_OUTPUT -Append
+              $delimiter           | Out-File $env:GITHUB_OUTPUT -Append
+          }
+
+          Add-PemOutput 'private-pem'      $signing.ExportECPrivateKeyPem()
+          Add-PemOutput 'public-pem'       $signing.ExportSubjectPublicKeyInfoPem()
+          Add-PemOutput 'other-public-pem' $other.ExportSubjectPublicKeyInfoPem()
+          Write-Host 'Generated a throwaway EC P-256 signing key and an unrelated P-256 public key.'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sign-proof-input
+          path: stage/*
+          if-no-files-found: error
+
+  sign:
+    name: Run the signing lane
+    needs: stage
+    uses: ./.github/workflows/sign-mender-artifact.yml
+    with:
+      artifact-name: sign-proof-input
+      mender-glob: 'unsigned.mender'
+      mender-artifact: ./mender-artifact
+      signed-artifact-name: sign-proof-signed
+    secrets:
+      ARTIFACT_SIGNING_KEY: ${{ needs.stage.outputs.signing-key }}
+
+  assert:
+    name: Assert the signature verifies — and only with the right key
+    needs: [stage, sign]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sign-proof-tool
+          path: tool
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sign-proof-signed
+          path: signed
+
+      - name: Verify, positively and negatively
+        shell: pwsh
+        env:
+          PUBLIC_KEY: ${{ needs.stage.outputs.public-key }}
+          OTHER_PUBLIC_KEY: ${{ needs.stage.outputs.other-public-key }}
+        run: |
+          chmod +x ./tool/mender-artifact
+          $artifact = (Get-ChildItem -Path signed -Recurse -Filter '*.mender' | Select-Object -First 1).FullName
+          Write-Host "Signed artifact: $artifact"
+
+          Set-Content -Path correct.pub -Value $env:PUBLIC_KEY
+          Set-Content -Path other.pub   -Value $env:OTHER_PUBLIC_KEY
+
+          & ./tool/mender-artifact validate -k correct.pub $artifact
+          if ($LASTEXITCODE -ne 0) { throw "The signed artifact did not validate against its own key (exit $LASTEXITCODE)." }
+
+          # The row that proves verification is engaged rather than merely not erroring.
+          $rejection = (& ./tool/mender-artifact validate -k other.pub $artifact 2>&1 | Out-String)
+          Write-Host $rejection
+          if ($LASTEXITCODE -eq 0) { throw 'An unrelated key validated the artifact. Verification is not engaged.' }
+          if ($rejection -notmatch 'verification failed') {
+              throw "Validation against an unrelated key failed for the wrong reason: $rejection"
+          }
+
+          # And the tool must refuse to pass an artifact it was not asked to verify — otherwise an
+          # unset key path degrades silently into installing unverified code.
+          $unasked = (& ./tool/mender-artifact validate $artifact 2>&1 | Out-String)
+          Write-Host $unasked
+          if ($LASTEXITCODE -eq 0) { throw 'validate with no key succeeded; it must not.' }
+          Write-Host 'Correct key validates; unrelated key is rejected; no key is refused.'
+          # Actions' pwsh wrapper ends every step with `exit $LASTEXITCODE`, which is still the
+          # non-zero code from the rejections this step exists to require. Leave deliberately.
+          exit 0
