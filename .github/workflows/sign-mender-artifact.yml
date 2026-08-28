@@ -96,7 +96,7 @@ jobs:
       contents: read
     steps:
       - name: Download the artifact to sign
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact-name }}
           path: incoming
@@ -209,7 +209,7 @@ jobs:
           }
 
       - name: Upload the signed artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.signed-artifact-name != '' && inputs.signed-artifact-name || format('{0}-signed', inputs.artifact-name) }}
           path: signed/*

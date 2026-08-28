@@ -7,6 +7,25 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+## v1.8.0 — 2026-08-28
+
+### Changed
+
+- **Every pinned third-party action moved off the deprecated Node 20 runtime.** All the
+  `actions/*`, `docker/*` and `azure/*` majors pinned across the reusable workflows, the proofs
+  and the composite actions declared `runs.using: node20`, which GitHub currently force-runs on
+  Node 24 through a compatibility shim — and when the shim is withdrawn, every `@v1` consumer
+  breaks at once. Audited each action's current major for `runs.using: node24` and bumped:
+  `actions/checkout` v4→v7, `actions/setup-dotnet` v4→v6, `actions/upload-artifact` v4→v7,
+  `actions/download-artifact` v4→v8, `actions/setup-go` v5→v7, `docker/metadata-action` v5→v6,
+  `azure/login` v2→v3, `azure/aks-set-context` v4→v5. No input/output/secret contract changes.
+  The breaking changes the crossed majors carry sit outside these workflows' usage: artifact
+  transfers are by name with default zipping (the storage format is unchanged since v4, so
+  mixed-version producers and consumers keep interoperating), nothing checks out a fork PR
+  under `pull_request_target` (checkout v7's new guard), and `download-artifact` v8 failing
+  hard on a digest mismatch is the default this lane wants. Self-hosted runners must be on
+  Actions Runner ≥ 2.327.1 (released 2025-07); auto-updating runners are long past it.
+
 ## v1.7.0 — 2026-08-28
 
 ### Added

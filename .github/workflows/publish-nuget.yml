@@ -83,9 +83,9 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       is_release: ${{ steps.version.outputs.is_release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         # Install into a writable, runner-local dir — self-hosted runners often can't write the
         # system default (/usr/share/dotnet), which fails setup-dotnet. Set at step level: the
         # runner context isn't available in job-level env.
@@ -144,7 +144,7 @@ jobs:
           --api-key ${{ secrets.NUGET_API_KEY }}
           --skip-duplicate
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nupkg
           path: ${{ inputs.pack-output }}/*.*nupkg

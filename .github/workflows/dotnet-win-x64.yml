@@ -100,9 +100,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         # Install .NET into a writable, runner-local dir. Self-hosted runners frequently can't
         # write the system default (C:\Program Files\dotnet), which makes setup-dotnet fail before
         # the build starts; runner.temp is always writable. Set at step level: the runner context
@@ -190,7 +190,7 @@ jobs:
 
       - name: Upload publish output
         if: ${{ inputs.artifact-name != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-name }}
           path: ${{ inputs.publish-output }}
