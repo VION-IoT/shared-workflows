@@ -64,9 +64,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         # Install .NET into a writable, runner-local dir. Self-hosted runners frequently can't write the
         # system default (/usr/share/dotnet, C:\Program Files\dotnet), which makes setup-dotnet fail before
         # the build starts; runner.temp is always writable. Set at step level: the runner context is not

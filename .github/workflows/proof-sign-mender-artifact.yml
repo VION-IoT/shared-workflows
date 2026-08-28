@@ -45,7 +45,7 @@ jobs:
       public-key: ${{ steps.key.outputs.public-pem }}
       other-public-key: ${{ steps.key.outputs.other-public-pem }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sign-proof-tool
           path: stage
@@ -85,7 +85,7 @@ jobs:
           Add-PemOutput 'other-public-pem' $other.ExportSubjectPublicKeyInfoPem()
           Write-Host 'Generated a throwaway EC P-256 signing key and an unrelated P-256 public key.'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sign-proof-input
           path: stage/*
@@ -108,12 +108,12 @@ jobs:
     needs: [stage, sign]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sign-proof-tool
           path: tool
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sign-proof-signed
           path: signed

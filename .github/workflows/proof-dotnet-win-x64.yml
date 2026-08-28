@@ -39,7 +39,7 @@ jobs:
     needs: lane
     runs-on: windows-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: fixture-win-x64-publish
           path: publish
@@ -70,9 +70,9 @@ jobs:
     name: Assert `dotnet test` would fail on this project shape
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         env:
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:

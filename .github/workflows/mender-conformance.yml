@@ -162,7 +162,7 @@ jobs:
       contents: read
     steps:
       - name: Download the round-trip executable
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact-name }}
           path: round-trip
@@ -338,7 +338,7 @@ jobs:
 
       - name: Upload the round-trip log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.logs-artifact-name }}
           path: ${{ env.CONFORMANCE_LOG }}
