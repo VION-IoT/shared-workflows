@@ -7,6 +7,39 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+## v1.7.0 — 2026-08-28
+
+### Added
+
+- **`mender-conformance.yml`** — new optional input **`mender-admin-url`**. The Mender
+  environments now serve the two halves of a round-trip from two hosts: `mender.<env>` is
+  device-only and gated with `RequireAndVerifyClientCert` at the Traefik edge, while the UI,
+  `/api/management` and `/api/internal` moved to `mender-admin.<env>` behind the IP-whitelist
+  (decision `0116-mender-device-api-mtls-hostname`). The preflight probed both halves from one
+  base URL, so no single value was correct any more. `mender-server-url` keeps its meaning and
+  is now documented as the **device** host — it is also the URL a caller feeds its round-trip
+  executable — and the management half probes `mender-admin-url` when the caller supplies it.
+  Omitted, that half reports "not probed" rather than being probed against the device host,
+  where it would only measure the client-certificate gate a second time. Additive: existing
+  callers keep working.
+
+### Changed
+
+- **`mender-conformance.yml`** — a certificate-less request the device host refuses **below
+  HTTP** is now reported as **"reachable and gated"**, not `NO ANSWER`. Under the enforced gate
+  that is the healthy outcome: the edge answers the empty `Certificate` message with TLSv1.3
+  alert 116 `certificate_required` (curl exit 56), and the old wording read it as an outage. The
+  preflight therefore opens a TCP connection before issuing the request — port open with no HTTP
+  answer is the gate working, port shut is a genuine no-answer (DNS, routing, a dead edge). The
+  underlying transport error is still appended, because it is the only thing separating the
+  refusal the row expects from an expired or mis-named *server* certificate, which fails at the
+  same layer. Still non-gating: the round-trip executable is the gate.
+- **`mender-conformance.yml`** — the management-half probe now targets
+  `/api/management/v2/devauth/devices`. The `v1/deviceauth` spelling it used is not a Mender
+  route: it answers 404 from Traefik's fallback, which reads as "the management API answered"
+  and is not. Measured against the admin host on 2026-08-28 — v1/deviceauth 404, v2/devauth 401.
+  The summary table gains a `host` column so each half names the host it actually probed.
+
 ## v1.6.0 — 2026-08-12
 
 ### Added
