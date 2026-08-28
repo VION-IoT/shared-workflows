@@ -15,15 +15,26 @@ name: Mender conformance round-trip
 #
 # ## Reachability — read this before scheduling it
 #
-# A full round-trip has two halves and they are reachable from different places:
+# A full round-trip has two halves. They are served by two *hosts* and are reachable from
+# different places:
 #
-#   - **The device API** (`/api/devices/*`) is mTLS-gated at the Traefik edge but is *not*
-#     IP-whitelisted. Authenticate, inventory, deployment poll, status and log reporting are all
-#     reachable from an ordinary GitHub-hosted runner.
-#   - **The management API** (`/api/management/*`, and `/api/internal/*`, `/ui/*`) is
-#     **IP-whitelisted** at the edge. Staging a round-trip — opening the commissioning request,
-#     uploading the artifact, creating the deployment — goes through it. So does any assertion
-#     made by reading the server's view of the result.
+#   - **The device API** (`/api/devices/*`) is served by the **device host** — `mender-server-url`
+#     — which is device-only and mTLS-gated at the Traefik edge (`RequireAndVerifyClientCert`),
+#     but is *not* IP-whitelisted. Authenticate, inventory, deployment poll, status and log
+#     reporting are all reachable from an ordinary GitHub-hosted runner, provided it presents a
+#     client certificate. A probe holding none never reaches HTTP at all: the edge answers the
+#     empty `Certificate` message with TLSv1.3 alert 116 `certificate_required` (curl exit 56).
+#     That is the gate *working*, and the preflight below reports it as "reachable and gated".
+#   - **The management API** (`/api/management/*`, and `/api/internal/*`, `/ui/*`) is served by a
+#     separate **admin host** — `mender-admin-url` — and is **IP-whitelisted** at the edge.
+#     Staging a round-trip — opening the commissioning request, uploading the artifact, creating
+#     the deployment — goes through it. So does any assertion made by reading the server's view
+#     of the result.
+#
+# One base URL no longer covers both, which is why there are two inputs. `mender-server-url` is
+# the device host and stays the URL a caller points its round-trip executable at;
+# `mender-admin-url` is the admin host, is read by the preflight only, and is optional — omit it
+# and the management half is reported as not probed.
 #
 # `artifacts-mender` passes that whitelist by running on the org's self-hosted runners, which are
 # headless WireGuard peers (labels `self-hosted, vpn, mender-artifact`); their traffic SNATs to
@@ -55,7 +66,10 @@ name: Mender conformance round-trip
 #           artifact-name: round-trip-win-x64
 #           executable: ./vion-agent-spike.exe
 #           arguments: run
-#           mender-server-url: https://mender.test.vion.swiss
+#           # Two hosts since the device/admin split. Keep the values in repository variables
+#           # rather than in workflow source.
+#           mender-server-url: ${{ vars.MENDER_TEST_URL }}         # device host, mTLS-gated
+#           mender-admin-url: ${{ vars.MENDER_ADMIN_TEST_URL }}    # admin host, IP-whitelisted
 #           device-id-environment-variable: VION_AGENT_Agent__Identity__DeviceIdOverride
 #         secrets: inherit
 #
@@ -84,9 +98,20 @@ on:
         required: true
         type: string
         description: >-
-          Base URL of the TEST Mender server. Used for the reachability preflight and the run
-          summary. The executable reads its own endpoints from `environment` below — this
+          Base URL of the **device** Mender host — the half serving `/api/devices/*`, device-only
+          and mTLS-gated at the edge. Used for the device half of the reachability preflight and
+          the run summary. The executable reads its own endpoints from `environment` below — this
           workflow does not presume the caller's configuration keys.
+      mender-admin-url:
+        required: false
+        type: string
+        default: ''
+        description: >-
+          Base URL of the **admin** Mender host — the half serving the UI, `/api/management/*`
+          and `/api/internal/*` behind the edge IP-whitelist. Read by the management half of the
+          reachability preflight and by nothing else. Optional: when it is omitted that half is
+          reported as not probed, rather than probed against the device host where — since the
+          device/admin split — it would only measure the client-certificate gate a second time.
       environment:
         required: false
         type: string
@@ -94,7 +119,9 @@ on:
         description: >-
           Endpoint and runtime configuration for the executable, one NAME=value per line. The
           caller names its own variables; nothing here is interpreted. Example:
-          'VION_AGENT_Agent__Mender__ServerUrl=https://mender.test.vion.swiss'.
+          'VION_AGENT_Agent__Mender__ServerUrl=https://mender.test.example'. Endpoints the
+          executable talks to are the caller's business: a device round-trip wants the device
+          host, which is what `mender-server-url` names.
       device-id-environment-variable:
         required: true
         type: string
@@ -143,52 +170,127 @@ jobs:
       # Probe both halves and record what was actually reachable. A run that can talk to the
       # device API but not the management API is testing half the contract; that has to be visible
       # in the summary rather than inferred from a confusing failure twenty minutes later.
+      #
+      # Each half is probed in two stages, because on the device host a failed HTTP request has
+      # two opposite readings. The client-certificate gate refuses a certificate-less request
+      # *below* HTTP — the edge answers the empty `Certificate` message with TLSv1.3 alert 116
+      # `certificate_required` — so a healthy gated host and a dead host both fail the request.
+      # Opening a TCP connection first is what separates them: port open and no HTTP answer is the
+      # gate doing its job; port shut is a genuine no-answer (DNS, routing, a dead edge).
       - name: Preflight — what is reachable from this runner
         shell: pwsh
         env:
           MENDER_SERVER_URL: ${{ inputs.mender-server-url }}
+          MENDER_ADMIN_URL: ${{ inputs.mender-admin-url }}
         run: |
-          $probeTimeoutSeconds = 15
+          $probeTimeoutSeconds      = 15
+          $probeTimeoutMilliseconds = $probeTimeoutSeconds * 1000
+          $notProbedCell            = '—'
           # Traefik's IP-whitelist middleware answers a blocked source with 403 before Mender ever
           # sees the request, so "the edge answered" is not the same as "we are allowed in". Only
           # the whitelisted routes can produce 403 that way; read it as blocked there.
           $forbidden = 403
+
+          # Stage one. Does the edge answer at the transport level at all? This is the whole
+          # discriminator between a genuine no-answer and a connection that was established and
+          # then refused above TCP — which is what an enforced client-certificate gate looks like
+          # to a runner holding no certificate.
+          function Test-TcpPortOpen {
+              param([uri] $Uri, [int] $TimeoutMilliseconds)
+
+              $client = [System.Net.Sockets.TcpClient]::new()
+              try {
+                  if (-not $client.ConnectAsync($Uri.Host, $Uri.Port).Wait($TimeoutMilliseconds)) {
+                      return @{ Open   = $false
+                                Reason = "no TCP answer from $($Uri.Host):$($Uri.Port) within $TimeoutMilliseconds ms" }
+                  }
+                  return @{ Open = $true; Reason = '' }
+              }
+              catch { return @{ Open = $false; Reason = $_.Exception.GetBaseException().Message } }
+              finally { $client.Dispose() }
+          }
+
+          # Exception text goes into a Markdown table cell; keep it on one line and neutralise the
+          # column separator.
+          function Format-Cell {
+              param([string] $Text)
+              (($Text -replace '\s+', ' ') -replace '\|', '\|').Trim()
+          }
+
           $probes = @(
-              @{ Half            = 'device API (mTLS-gated, not IP-whitelisted)'
-                 Path            = '/api/devices/v1/authentication/auth_requests'
-                 ForbiddenMeans  = 'reachable, rejected by Mender' }
-              @{ Half            = 'management API (IP-whitelisted)'
-                 Path            = '/api/management/v1/deviceauth/devices'
-                 ForbiddenMeans  = 'BLOCKED by the edge IP-whitelist — this runner is not in the VPN peer set' }
+              @{ Half           = 'device API (mTLS-gated, not IP-whitelisted)'
+                 BaseUrl        = $env:MENDER_SERVER_URL
+                 Path           = '/api/devices/v1/authentication/auth_requests'
+                 AnsweredMeans  = 'reachable, NOT gated — a certificate-less request got an HTTP answer'
+                 ForbiddenMeans = 'reachable, rejected by Mender'
+                 BelowHttpMeans = 'reachable and gated — certificate-less request refused below HTTP'
+                 UnsetMeans     = 'not probed — no device host supplied by the caller' }
+              @{ Half           = 'management API (IP-whitelisted)'
+                 BaseUrl        = $env:MENDER_ADMIN_URL
+                 # deviceauth's real management route. The v1/deviceauth spelling this probe
+                 # used before answers 404 from Traefik's fallback, which reads as "the
+                 # management API answered" and is not; v2/devauth answers 401 unauthenticated,
+                 # which is proof the API itself is behind the edge.
+                 Path           = '/api/management/v2/devauth/devices'
+                 AnsweredMeans  = 'reachable'
+                 ForbiddenMeans = 'BLOCKED by the edge IP-whitelist — this runner is not in the VPN peer set'
+                 BelowHttpMeans = 'port open, request refused below HTTP — a TLS or proxy failure, not the IP-whitelist'
+                 UnsetMeans     = 'not probed — no admin host supplied by the caller' }
           )
 
           $rows = foreach ($probe in $probes) {
-              $uri = ($env:MENDER_SERVER_URL.TrimEnd('/')) + $probe.Path
+              if (-not $probe.BaseUrl) {
+                  [pscustomobject]@{ Half = $probe.Half; Origin = ''; Result = $probe.UnsetMeans }
+                  continue
+              }
+
+              $uri    = [uri](($probe.BaseUrl.TrimEnd('/')) + $probe.Path)
+              $origin = "$($uri.Scheme)://$($uri.Authority)"
+
+              $transport = Test-TcpPortOpen -Uri $uri -TimeoutMilliseconds $probeTimeoutMilliseconds
+              if (-not $transport.Open) {
+                  [pscustomobject]@{ Half   = $probe.Half
+                                     Origin = $origin
+                                     Result = "NO ANSWER — $($transport.Reason)" }
+                  continue
+              }
+
               try {
                   $response = Invoke-WebRequest -Uri $uri -Method Head -SkipHttpErrorCheck `
                                                 -TimeoutSec $probeTimeoutSeconds
-                  $status = [int]$response.StatusCode
-                  $verdict = if ($status -eq $forbidden) { $probe.ForbiddenMeans } else { 'reachable' }
-                  [pscustomobject]@{ Half = $probe.Half; Result = "$verdict (HTTP $status)" }
+                  $status  = [int]$response.StatusCode
+                  $verdict = if ($status -eq $forbidden) { $probe.ForbiddenMeans } else { $probe.AnsweredMeans }
+                  [pscustomobject]@{ Half = $probe.Half; Origin = $origin; Result = "$verdict (HTTP $status)" }
               }
               catch {
-                  [pscustomobject]@{ Half = $probe.Half; Result = "NO ANSWER — $($_.Exception.Message)" }
+                  # The port answered, so the edge is alive: the connection was established and
+                  # then refused above TCP. What that means differs per half — hence the table.
+                  # The exception text rides along because it is the only thing separating the
+                  # refusal this row expects (alert 116, no client certificate offered) from one
+                  # it does not (an expired or mis-named *server* certificate, which fails at the
+                  # same layer and would otherwise read as a healthy gate).
+                  [pscustomobject]@{ Half   = $probe.Half
+                                     Origin = $origin
+                                     Result = "$($probe.BelowHttpMeans) — $($_.Exception.GetBaseException().Message)" }
               }
           }
 
           "### Mender conformance preflight"                                | Out-File $env:GITHUB_STEP_SUMMARY -Append
           ""                                                                | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "Server: ``$env:MENDER_SERVER_URL`` — runner: ``${{ runner.os }}/${{ runner.name }}``" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "Runner: ``${{ runner.os }}/${{ runner.name }}``"                  | Out-File $env:GITHUB_STEP_SUMMARY -Append
           ""                                                                | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "| half | result |"                                               | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "|---|---|"                                                       | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "| half | host | result |"                                        | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "|---|---|---|"                                                   | Out-File $env:GITHUB_STEP_SUMMARY -Append
           foreach ($row in $rows) {
-              "| $($row.Half) | $($row.Result) |"                           | Out-File $env:GITHUB_STEP_SUMMARY -Append
-              Write-Host "$($row.Half): $($row.Result)"
+              $originCell = if ($row.Origin) { "``$($row.Origin)``" } else { $notProbedCell }
+              "| $($row.Half) | $originCell | $(Format-Cell $row.Result) |"  | Out-File $env:GITHUB_STEP_SUMMARY -Append
+              Write-Host "$($row.Half) [$originCell]: $($row.Result)"
           }
           ""                                                                | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "The management API is IP-whitelisted at the Traefik edge; only runners inside the VPN peer set reach it." |
-              Out-File $env:GITHUB_STEP_SUMMARY -Append
+          ("The device host is device-only and demands a client certificate at the TLS layer, so a " +
+           "certificate-less probe that never reaches HTTP is the healthy answer, not an outage. The " +
+           "management API lives on the admin host and is IP-whitelisted at the Traefik edge; only " +
+           "runners inside the VPN peer set reach it.") | Out-File $env:GITHUB_STEP_SUMMARY -Append
 
           # Deliberately not a gate. The round-trip executable is the gate — it knows which halves
           # it needs. This step exists so its failure is legible.

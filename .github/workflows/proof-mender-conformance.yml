@@ -17,8 +17,11 @@ name: Proof — Mender conformance template
 # the caller's own variable names. Everything past that is the agent's contract with the server,
 # not this repository's.
 #
-# The template's preflight probe still runs, against `vars.MENDER_TEST_URL` when the repository
-# defines it. It is non-gating by design, so the proof stays green either way and the job summary
+# The template's preflight probe still runs, against `vars.MENDER_TEST_URL` and
+# `vars.MENDER_ADMIN_TEST_URL` when the repository defines them. Since the device/admin split
+# those are two different hosts and neither substitutes for the other: the device host is
+# device-only and mTLS-gated, the admin host carries the management API behind the IP-whitelist.
+# The probe is non-gating by design, so the proof stays green either way and the job summary
 # records what was actually reachable from this runner — which is the evidence the whitelist
 # question wants.
 
@@ -51,11 +54,15 @@ jobs:
       artifact-name: conformance-round-trip
       executable: ./Vion.Fixture.WindowsService.exe
       arguments: conformance-probe
-      # The hostname is not written into this public repository. When the platform team sets the
-      # MENDER_TEST_URL repository variable, the preflight starts reporting real reachability;
-      # until then it reports "no answer" against a reserved-invalid name, which still exercises
-      # the probe.
+      # Hostnames are not written into this public repository. When the platform team sets the
+      # repository variables, the preflight starts reporting real reachability; until then it
+      # reports "no answer" against reserved-invalid names, which still exercises the probe.
+      #
+      # Two variables, because the halves are two hosts. MENDER_TEST_URL stays the *device* host
+      # — it is also what feeds the device-facing fixture variable below, so flipping it to the
+      # admin host would point the round-trip at the wrong half.
       mender-server-url: ${{ vars.MENDER_TEST_URL || 'https://mender.test.invalid' }}
+      mender-admin-url: ${{ vars.MENDER_ADMIN_TEST_URL || 'https://mender-admin.test.invalid' }}
       environment: |
         FIXTURE_REQUIRED_VARIABLES=VION_FIXTURE_MENDER_URL,VION_FIXTURE_DEVICE_ID
         VION_FIXTURE_MENDER_URL=${{ vars.MENDER_TEST_URL || 'https://mender.test.invalid' }}
