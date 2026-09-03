@@ -30,7 +30,7 @@ workflows above because the failure modes are different, not because the languag
 
 | Workflow | Purpose |
 |----------|---------|
-| `dotnet-win-x64.yml` | Build a solution, run a **caller-supplied** test command, publish one project self-contained for `win-x64`. RID is fixed, not an input — the fleet is all 64-bit |
+| `dotnet-win-x64.yml` | Build a solution, run a **caller-supplied** test command, publish one project self-contained for `win-x64`. RID is fixed, not an input — the fleet is all 64-bit. `private-feed: true` (+ `secrets: inherit`) registers the VION feed, as on the Linux lane |
 | `vendored-go-build.yml` | Run a caller's vendored-Go build script with `core.longpaths=true` set before checkout, Go on PATH, and `nopkcs11` in `GOFLAGS` |
 | `sign-mender-artifact.yml` | Sign a `.mender` with an ECDSA **P-256** key from the caller's secret store, then verify. Defaults to a Linux runner — `mender-artifact sign` is broken on Windows |
 | `mender-conformance.yml` | Run a caller-supplied round-trip executable against a live Mender server, with an endpoint-reachability preflight over both halves. Two hosts since the device/admin split: `mender-server-url` is the device host (mTLS-gated) and `mender-admin-url` the admin host (management API, IP-whitelisted). `workflow_call` only; the caller owns the `schedule` / `workflow_dispatch` triggers |

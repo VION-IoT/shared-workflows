@@ -7,6 +7,27 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+## v1.9.0 — 2026-09-03
+
+### Added
+
+- **`dotnet-win-x64.yml`** — new optional input **`private-feed`** and optional secret
+  **`AZURE_DEVOPS_PAT`**. The lane restored from public feeds only, which its own header called
+  out as provisional ("add it when a consumer needs it"); `mesh` is that consumer — its win-x64
+  publish pulls `vion-contracts` and `Vion.Telemetry` from the VION Azure DevOps feed and cannot
+  restore without it. Wired the same way `dotnet-ci.yml` does it: the existing
+  `actions/setup-nuget-private-feed` composite, guarded by the input, placed after the SDK is on
+  PATH and before the build. Additive — `private-feed` defaults to `false`, so `vion-agent-windows`
+  and the fixture are untouched, and a caller that passes no secrets keeps working.
+
+  The composite is written `shell: sh` (POSIX, for the Alpine containers on the Linux lanes) and
+  had never run on a Windows runner. `proof-dotnet-win-x64.yml` gains a fourth job that runs it on
+  `windows-latest` and asserts an enabled `PrivateFeed` source comes out — so the Git-for-Windows
+  `sh.exe` this depends on is a tested assumption rather than an inherited one. A restore that
+  actually authenticates is not proven here: this repository holds no `AZURE_DEVOPS_PAT`, and
+  registering the real feed with an empty credential turns every restore in the job into NU1301.
+  That half is exercised by `mesh`'s lane.
+
 ## v1.8.0 — 2026-08-28
 
 ### Changed
