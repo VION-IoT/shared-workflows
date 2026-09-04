@@ -54,6 +54,14 @@ on:
         type: boolean
         default: false
         description: Register the VION private NuGet feed before build/restore (needs AZURE_DEVOPS_PAT)
+      restore-locked-mode:
+        required: false
+        type: boolean
+        default: false
+        description: >-
+          Fail the publish if the resolved package graph differs from the caller's
+          packages.lock.json. Applies to the publish only — see the Publish step for why it cannot
+          be applied to the build.
       configuration:
         required: false
         type: string
@@ -175,6 +183,14 @@ jobs:
       # above (it pulls the runtime pack and lays out the apphost), so reusing the Build step's
       # output would either fail or produce a framework-dependent layout. The Build step earns its
       # keep by failing fast and by letting a caller's test command pass `--no-build`.
+      #
+      # `restore-locked-mode` applies here and NOT to the Build step, which is not an oversight. The
+      # SDK injects its own package references during a publish that it does not inject during a
+      # build — `Microsoft.DotNet.ILCompiler` for a NativeAOT project, `Microsoft.NET.ILLink.Tasks`
+      # for a trimmed one — because that injection is gated on `_IsPublishing`. A lock file written
+      # by `dotnet publish` therefore records direct references that `dotnet build` does not see,
+      # and locked mode on the build would fail every AOT caller with NU1004 for a lock file that is
+      # in fact correct. `mesh` is exactly that caller.
       - name: Publish
         shell: pwsh
         env:
@@ -183,6 +199,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           SELF_CONTAINED: ${{ inputs.self-contained }}
           PUBLISH_OUTPUT: ${{ inputs.publish-output }}
+          RESTORE_LOCKED_MODE: ${{ inputs.restore-locked-mode }}
         run: |
           $arguments = @(
               'publish', $env:PUBLISH_PROJECT,
@@ -191,6 +208,7 @@ jobs:
               "--self-contained:$($env:SELF_CONTAINED)",
               '-o', $env:PUBLISH_OUTPUT
           )
+          if ($env:RESTORE_LOCKED_MODE -eq 'true') { $arguments += '-p:RestoreLockedMode=true' }
           if ($env:VERSION) { $arguments += "-p:Version=$env:VERSION" }
           Write-Host "> dotnet $($arguments -join ' ')"
           & dotnet @arguments

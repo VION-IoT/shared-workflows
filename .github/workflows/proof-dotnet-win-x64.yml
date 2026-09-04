@@ -10,7 +10,10 @@ name: Proof — .NET win-x64 publish
 #   3. `dotnet test` — the command this lane deliberately does NOT hardcode — really does fail on
 #      this project shape. Without job 3 the `test-command` input looks like a preference;
 #   4. the `setup-nuget-private-feed` composite the lane's `private-feed` input reaches actually
-#      registers a source on a WINDOWS runner. See that job for what it does and does not cover.
+#      registers a source on a WINDOWS runner. See that job for what it does and does not cover;
+#   5. `restore-locked-mode` really gates. The `lane` job passes it, but a lane that ignored the
+#      input would pass too — so job 5 tampers with the fixture's lock file and asserts the publish
+#      refuses. Without it the input is decorative.
 
 on:
   pull_request:
@@ -34,6 +37,9 @@ jobs:
       # The command vion-agent-windows has to use, for the reason job `hardcoded-dotnet-test`
       # below demonstrates.
       test-command: dotnet run --project tests/fixtures/dotnet-win-x64/tests/Vion.Fixture.WindowsService.Tests/Vion.Fixture.WindowsService.Tests.csproj -c Release --no-build
+      # The fixture commits packages.lock.json, so the happy path is gated. Job
+      # `lock-gate-bites` is what proves the input is doing the gating.
+      restore-locked-mode: true
       version: 1.2.3
       artifact-name: fixture-win-x64-publish
 
@@ -113,6 +119,56 @@ jobs:
               throw "setup-nuget-private-feed did not register an enabled 'PrivateFeed' source on this Windows runner."
           }
           Write-Host 'Confirmed: the composite runs and registers its source on windows-latest.'
+
+  lock-gate-bites:
+    name: Assert restore-locked-mode refuses a stale lock file
+    # The `lane` job publishes with restore-locked-mode: true and a lock file that matches, so it
+    # goes green whether or not the flag ever reached `dotnet publish`. This job removes that
+    # ambiguity from the other side: with a package version the lock file does not record, the
+    # publish must refuse. Inlined rather than run through the lane because a reusable-workflow job
+    # cannot be asserted to fail — `continue-on-error` is not among the keys a `uses:` job accepts.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Put dotnet on PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value '${{ runner.temp }}/dotnet'
+
+      # Bump the referenced version without touching the lock file, which is the shape of the real
+      # mistake: a dependency changed and nobody re-ran restore.
+      - name: Move the fixture off its lock file
+        shell: pwsh
+        working-directory: tests/fixtures/dotnet-win-x64
+        run: |
+          $project = 'tests/Vion.Fixture.WindowsService.Tests/Vion.Fixture.WindowsService.Tests.csproj'
+          (Get-Content $project -Raw).Replace('Version="4.2.3"', 'Version="4.2.2"') | Set-Content $project -NoNewline
+          Select-String -Path $project -Pattern 'MSTest'
+
+      - name: The publish must refuse
+        shell: pwsh
+        working-directory: tests/fixtures/dotnet-win-x64
+        run: |
+          $log = dotnet publish tests/Vion.Fixture.WindowsService.Tests/Vion.Fixture.WindowsService.Tests.csproj `
+              -c Release -r win-x64 --self-contained:true -o ../../../publish-lock-gate -p:RestoreLockedMode=true 2>&1 | Out-String
+          Write-Host $log
+          if ($LASTEXITCODE -eq 0) {
+              throw ("The publish succeeded against a lock file that does not record MSTest 4.2.2. " +
+                     "restore-locked-mode is not reaching `dotnet publish`, and the lane's gating is decorative.")
+          }
+          if ($log -notmatch 'NU1004|NU1403') {
+              throw "The publish failed, but not with the lock-file mismatch this job exists to observe."
+          }
+          Write-Host 'Confirmed: restore-locked-mode refuses a package graph the lock file does not pin.'
+          # Actions' pwsh wrapper ends the step with `exit $LASTEXITCODE`, still non-zero from the
+          # command this job exists to watch fail. Leave deliberately.
+          exit 0
 
   hardcoded-dotnet-test:
     name: Assert `dotnet test` would fail on this project shape
