@@ -7,7 +7,7 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
-## v1.9.0 — 2026-09-03
+## v1.9.0 — 2026-09-04
 
 ### Added
 
