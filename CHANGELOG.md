@@ -7,6 +7,48 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+## v1.9.0 — 2026-09-03
+
+### Added
+
+- **`dotnet-win-x64.yml`** — new optional input **`private-feed`** and optional secret
+  **`AZURE_DEVOPS_PAT`**. The lane restored from public feeds only, which its own header called
+  out as provisional ("add it when a consumer needs it"); `mesh` is that consumer. Not because the
+  packages are unreachable otherwise — `Vion.Contracts` and both `Vion.Telemetry` packages are on
+  nuget.org at the versions `mesh` pins — but because `publish-nuget.yml` pushes an intermediate
+  package to the private feed on **every** main push and only reaches nuget.org on a stable tag, so
+  a consumer building right after a bump resolves from the feed while nuget.org indexes. `mesh`'s
+  Linux `ci` gate already passes `private-feed: true` for that reason; without this input the two
+  lanes of one repository disagreed about where packages come from. Wired the same way
+  `dotnet-ci.yml` does it: the existing
+  `actions/setup-nuget-private-feed` composite, guarded by the input, placed after the SDK is on
+  PATH and before the build. Additive — `private-feed` defaults to `false`, so `vion-agent-windows`
+  and the fixture are untouched, and a caller that passes no secrets keeps working.
+
+  The composite is written `shell: sh` (POSIX, for the Alpine containers on the Linux lanes) and
+  had never run on a Windows runner. `proof-dotnet-win-x64.yml` gains a fourth job that runs it on
+  `windows-latest` and asserts an enabled `PrivateFeed` source comes out — so the Git-for-Windows
+  `sh.exe` this depends on is a tested assumption rather than an inherited one. A restore that
+  actually authenticates is not proven here: this repository holds no `AZURE_DEVOPS_PAT`, and
+  registering the real feed with an empty credential turns every restore in the job into NU1301.
+  That half is exercised by `mesh`'s lane.
+
+- **`dotnet-win-x64.yml`** — new optional input **`restore-locked-mode`**. The Linux publishes in
+  `mesh` pass `-p:RestoreLockedMode=true`; the Windows one had no way to, so the same repository
+  pinned its package graph on one platform and merely resolved it on the other. Additive, default
+  `false`.
+
+  It applies to the **publish only**, which is not an oversight. The SDK injects package references
+  during a publish that it does not inject during a build — `Microsoft.DotNet.ILCompiler` for a
+  NativeAOT project, `Microsoft.NET.ILLink.Tasks` for a trimmed one — because that injection is
+  gated on `_IsPublishing`. A lock file written by `dotnet publish` therefore records direct
+  references `dotnet build` never sees, so locked mode on the build step would fail every AOT
+  caller with NU1004 for a lock file that is correct.
+
+  The fixture now commits `packages.lock.json` so the input has something to gate, and the proof
+  gains a job that moves the fixture off its lock file and asserts the publish refuses — a lane
+  that quietly ignored the input would pass the happy path either way.
+
 ## v1.8.0 — 2026-08-28
 
 ### Changed

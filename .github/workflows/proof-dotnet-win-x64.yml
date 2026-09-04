@@ -3,18 +3,24 @@ name: Proof — .NET win-x64 publish
 # fixture under tests/fixtures/dotnet-win-x64/, which is shaped like `vion-agent-windows`:
 # net10.0-windows, win-x64, and an MSTest project that runs under Microsoft.Testing.Platform.
 #
-# Three things are asserted, in three jobs:
+# Four things are asserted, in four jobs:
 #   1. the lane itself completes (it runs the caller's test command, and the fixture's tests fail
 #      the job if they fail);
 #   2. what came out is a self-contained win-x64 executable that runs and says so;
 #   3. `dotnet test` — the command this lane deliberately does NOT hardcode — really does fail on
-#      this project shape. Without job 3 the `test-command` input looks like a preference.
+#      this project shape. Without job 3 the `test-command` input looks like a preference;
+#   4. the `setup-nuget-private-feed` composite the lane's `private-feed` input reaches actually
+#      registers a source on a WINDOWS runner. See that job for what it does and does not cover;
+#   5. `restore-locked-mode` really gates. The `lane` job passes it, but a lane that ignored the
+#      input would pass too — so job 5 tampers with the fixture's lock file and asserts the publish
+#      refuses. Without it the input is decorative.
 
 on:
   pull_request:
     paths:
       - '.github/workflows/dotnet-win-x64.yml'
       - '.github/workflows/proof-dotnet-win-x64.yml'
+      - 'actions/setup-nuget-private-feed/**'
       - 'tests/fixtures/dotnet-win-x64/**'
   workflow_dispatch:
 
@@ -31,6 +37,9 @@ jobs:
       # The command vion-agent-windows has to use, for the reason job `hardcoded-dotnet-test`
       # below demonstrates.
       test-command: dotnet run --project tests/fixtures/dotnet-win-x64/tests/Vion.Fixture.WindowsService.Tests/Vion.Fixture.WindowsService.Tests.csproj -c Release --no-build
+      # The fixture commits packages.lock.json, so the happy path is gated. Job
+      # `lock-gate-bites` is what proves the input is doing the gating.
+      restore-locked-mode: true
       version: 1.2.3
       artifact-name: fixture-win-x64-publish
 
@@ -65,6 +74,101 @@ jobs:
               }
           }
           Write-Host "Publish contains $((Get-ChildItem publish -Recurse -File).Count) files."
+
+  private-feed-composite:
+    name: Assert the private-feed composite registers a source on Windows
+    # What this covers: `setup-nuget-private-feed` is written `shell: sh`, for Alpine containers on
+    # the Linux lanes. On a Windows runner that resolves through the Git-for-Windows `sh.exe`, and
+    # if it ever stops doing so the composite fails — or worse, no-ops — and the caller sees an
+    # unrelated NU1101 in its restore. So the lane's `private-feed` input is only as good as this
+    # assertion.
+    #
+    # What it does not cover: a restore that actually authenticates. This repository holds no
+    # `AZURE_DEVOPS_PAT` (checked: zero repo and org Actions secrets), and registering the real
+    # feed with an empty credential turns every restore in the job into NU1301. The credentialed
+    # path is exercised by the consumer that asked for this input — `mesh`'s win-x64 lane.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Put dotnet on PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value '${{ runner.temp }}/dotnet'
+
+      - uses: ./actions/setup-nuget-private-feed
+        with:
+          # Not a credential: this job never restores through the source it registers. The literal
+          # is here so the composite's `dotnet nuget add source` gets a non-empty --password, which
+          # is all that stands between it and a usage error.
+          pat: proof-only-not-a-credential
+
+      - name: The source is registered and enabled
+        shell: pwsh
+        run: |
+          $sources = dotnet nuget list source | Out-String
+          Write-Host $sources
+          # The composite masks the feed URL, so the name is the only part of the entry that
+          # survives into the log — and the only part a caller's NuGet.Config is keyed by.
+          if ($sources -notmatch 'PrivateFeed \[Enabled\]') {
+              throw "setup-nuget-private-feed did not register an enabled 'PrivateFeed' source on this Windows runner."
+          }
+          Write-Host 'Confirmed: the composite runs and registers its source on windows-latest.'
+
+  lock-gate-bites:
+    name: Assert restore-locked-mode refuses a stale lock file
+    # The `lane` job publishes with restore-locked-mode: true and a lock file that matches, so it
+    # goes green whether or not the flag ever reached `dotnet publish`. This job removes that
+    # ambiguity from the other side: with a package version the lock file does not record, the
+    # publish must refuse. Inlined rather than run through the lane because a reusable-workflow job
+    # cannot be asserted to fail — `continue-on-error` is not among the keys a `uses:` job accepts.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Put dotnet on PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value '${{ runner.temp }}/dotnet'
+
+      # Bump the referenced version without touching the lock file, which is the shape of the real
+      # mistake: a dependency changed and nobody re-ran restore.
+      - name: Move the fixture off its lock file
+        shell: pwsh
+        working-directory: tests/fixtures/dotnet-win-x64
+        run: |
+          $project = 'tests/Vion.Fixture.WindowsService.Tests/Vion.Fixture.WindowsService.Tests.csproj'
+          (Get-Content $project -Raw).Replace('Version="4.2.3"', 'Version="4.2.2"') | Set-Content $project -NoNewline
+          Select-String -Path $project -Pattern 'MSTest'
+
+      - name: The publish must refuse
+        shell: pwsh
+        working-directory: tests/fixtures/dotnet-win-x64
+        run: |
+          $log = dotnet publish tests/Vion.Fixture.WindowsService.Tests/Vion.Fixture.WindowsService.Tests.csproj `
+              -c Release -r win-x64 --self-contained:true -o ../../../publish-lock-gate -p:RestoreLockedMode=true 2>&1 | Out-String
+          Write-Host $log
+          if ($LASTEXITCODE -eq 0) {
+              throw ("The publish succeeded against a lock file that does not record MSTest 4.2.2. " +
+                     "restore-locked-mode is not reaching `dotnet publish`, and the lane's gating is decorative.")
+          }
+          if ($log -notmatch 'NU1004|NU1403') {
+              throw "The publish failed, but not with the lock-file mismatch this job exists to observe."
+          }
+          Write-Host 'Confirmed: restore-locked-mode refuses a package graph the lock file does not pin.'
+          # Actions' pwsh wrapper ends the step with `exit $LASTEXITCODE`, still non-zero from the
+          # command this job exists to watch fail. Leave deliberately.
+          exit 0
 
   hardcoded-dotnet-test:
     name: Assert `dotnet test` would fail on this project shape

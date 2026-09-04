@@ -23,8 +23,10 @@ name: .NET win-x64 publish
 # passing a string.
 #
 # Caller is responsible for:
-#   - a solution that restores from public feeds only (the VION private feed is not wired here —
-#     see the PR that introduced this workflow; add it when a consumer needs it)
+#   - `private-feed: true` plus `secrets: inherit` (or an explicit `AZURE_DEVOPS_PAT`) when the
+#     solution restores anything from the VION private feed. Left false, the restore sees public
+#     feeds only — which is all the fixture and `vion-agent-windows` need, but not `mesh`
+#     (`vion-contracts`, `Vion.Telemetry`), the consumer that made this wiring necessary
 #   - granting `contents: read`
 
 on:
@@ -47,6 +49,19 @@ on:
           testing. This is a command, not a filter: `vion-agent-windows` needs
           'dotnet run --project tests/Vion.Agent.Windows.Tests/Vion.Agent.Windows.Tests.csproj'
           because `dotnet test` routes to legacy VSTest on its SDK and fails.
+      private-feed:
+        required: false
+        type: boolean
+        default: false
+        description: Register the VION private NuGet feed before build/restore (needs AZURE_DEVOPS_PAT)
+      restore-locked-mode:
+        required: false
+        type: boolean
+        default: false
+        description: >-
+          Fail the publish if the resolved package graph differs from the caller's
+          packages.lock.json. Applies to the publish only — see the Publish step for why it cannot
+          be applied to the build.
       configuration:
         required: false
         type: string
@@ -87,6 +102,10 @@ on:
       publish-path:
         description: Path to the publish output directory, relative to the workspace
         value: ${{ inputs.publish-output }}
+    secrets:
+      AZURE_DEVOPS_PAT:
+        required: false
+        description: Azure DevOps PAT with package read access; required when private-feed is true
 
 # The one place the fleet's runtime identifier is written down. See the header.
 env:
@@ -119,6 +138,16 @@ jobs:
       - name: Put dotnet on PATH
         shell: pwsh
         run: Add-Content -Path $env:GITHUB_PATH -Value '${{ runner.temp }}/dotnet'
+
+      # Same composite `dotnet-ci.yml` uses, so the feed URL and the masking stay in one place.
+      # Its `shell: sh` resolves on a Windows runner through the Git-for-Windows `sh.exe` that is
+      # on PATH there; `proof-dotnet-win-x64.yml` asserts that rather than trusting it, because a
+      # composite that silently fails to register the source would surface as an unrelated
+      # NU1101 in the caller's restore.
+      - if: ${{ inputs.private-feed }}
+        uses: VION-IoT/shared-workflows/actions/setup-nuget-private-feed@v1
+        with:
+          pat: ${{ secrets.AZURE_DEVOPS_PAT }}
 
       # No `-r` here: `dotnet build <solution> -r <rid>` is rejected outright with NETSDK1134
       # ("Building a solution with a specific RuntimeIdentifier is not supported"). The RID belongs
@@ -154,6 +183,14 @@ jobs:
       # above (it pulls the runtime pack and lays out the apphost), so reusing the Build step's
       # output would either fail or produce a framework-dependent layout. The Build step earns its
       # keep by failing fast and by letting a caller's test command pass `--no-build`.
+      #
+      # `restore-locked-mode` applies here and NOT to the Build step, which is not an oversight. The
+      # SDK injects its own package references during a publish that it does not inject during a
+      # build — `Microsoft.DotNet.ILCompiler` for a NativeAOT project, `Microsoft.NET.ILLink.Tasks`
+      # for a trimmed one — because that injection is gated on `_IsPublishing`. A lock file written
+      # by `dotnet publish` therefore records direct references that `dotnet build` does not see,
+      # and locked mode on the build would fail every AOT caller with NU1004 for a lock file that is
+      # in fact correct. `mesh` is exactly that caller.
       - name: Publish
         shell: pwsh
         env:
@@ -162,6 +199,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           SELF_CONTAINED: ${{ inputs.self-contained }}
           PUBLISH_OUTPUT: ${{ inputs.publish-output }}
+          RESTORE_LOCKED_MODE: ${{ inputs.restore-locked-mode }}
         run: |
           $arguments = @(
               'publish', $env:PUBLISH_PROJECT,
@@ -170,6 +208,7 @@ jobs:
               "--self-contained:$($env:SELF_CONTAINED)",
               '-o', $env:PUBLISH_OUTPUT
           )
+          if ($env:RESTORE_LOCKED_MODE -eq 'true') { $arguments += '-p:RestoreLockedMode=true' }
           if ($env:VERSION) { $arguments += "-p:Version=$env:VERSION" }
           Write-Host "> dotnet $($arguments -join ' ')"
           & dotnet @arguments
