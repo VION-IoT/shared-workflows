@@ -25,6 +25,14 @@ on:
 permissions:
   contents: read
 
+# `sign-proof-input` below is scratch: it hands the staged .mender and the freshly built tool to
+# the signing job inside one run, and nothing reads it afterwards except a human looking at a
+# failed proof. It is not a consumer artifact, so it does not take the reusable workflows'
+# 30-day `artifact-retention-days` default — the proofs fire on every PR touching the Windows
+# lane and this is the one upload in the repository whose whole life is a single run.
+env:
+  SCRATCH_RETENTION_DAYS: 1
+
 jobs:
   tool:
     name: Build mender-artifact for the signing runner
@@ -90,6 +98,7 @@ jobs:
           name: sign-proof-input
           path: stage/*
           if-no-files-found: error
+          retention-days: ${{ env.SCRATCH_RETENTION_DAYS }}
 
   sign:
     name: Run the signing lane

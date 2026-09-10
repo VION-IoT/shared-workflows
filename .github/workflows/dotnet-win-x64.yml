@@ -89,6 +89,16 @@ on:
         type: string
         default: ''
         description: When set, the publish output is uploaded as a workflow artifact under this name
+      artifact-retention-days:
+        required: false
+        type: number
+        default: 30
+        description: >-
+          Days GitHub keeps the uploaded publish output before expiring it. Defaults to 30 rather than the
+          repository's 90: on 2026-09-09 the org hit its Actions artifact storage quota and a
+          publish failed with nothing left to upload into. Pass a larger value only if something
+          downloads this artifact later than that — a consumer that reads it inside the same run
+          never needs to.
       runs-on:
         required: false
         type: string
@@ -234,3 +244,4 @@ jobs:
           name: ${{ inputs.artifact-name }}
           path: ${{ inputs.publish-output }}
           if-no-files-found: error
+          retention-days: ${{ inputs.artifact-retention-days }}
