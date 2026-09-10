@@ -67,9 +67,21 @@ Pin to a floating major tag (`@v1`) for low-friction updates, or to an
 exact tag (`@v1.2.3`) for production-critical pipelines. Major-version
 bumps signal breaking changes — see `CHANGELOG.md`.
 
-Every workflow artifact these workflows upload expires after **30 days**;
-a caller that needs one to live longer (or shorter) passes
-`artifact-retention-days` explicitly.
+### Artifact retention
+
+Every upload these workflows make is one of two things, and the class fixes
+the retention. A **hand-off** carries data from one job to the next job of
+the same run — the packed `.nupkg`, the `win-x64` publish output, the
+vendored Go build output — and nothing reads it after that run ends, so it
+expires after **1 day**, GitHub's minimum. A **deliverable** is read by a
+person, or fetched by a step that may not run for a while — the Mender
+conformance log someone opens after a nightly failure, the signed `.mender`
+a deployment gate collects — and it keeps the **30-day** default. Both are
+the default of that workflow's `artifact-retention-days` input, so a caller
+that genuinely reads a hand-off later says so at its own call site rather
+than the whole org paying for it: the org is on GitHub Free, whose 500 MB of
+Actions storage is a hard stop that blocks every publish in every repository
+once it is reached.
 
 ### Using a composite action
 

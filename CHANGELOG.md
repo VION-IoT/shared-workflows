@@ -7,6 +7,53 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+### Changed
+
+- **Artifact retention is now decided by what the artifact is for, not by one org-wide number.**
+  Every `actions/upload-artifact` in this repository is one of two classes, and the class sets the
+  default of that workflow's `artifact-retention-days`:
+
+  **Hand-off — 1 day (GitHub's minimum).** The artifact carries data from one job to the next job
+  of the same run and nothing reads it afterwards. `publish-nuget.yml`'s `nupkg`,
+  `dotnet-win-x64.yml`'s publish output, `vendored-go-build.yml`'s build output. Verified per
+  consumer, not assumed: `dale-sdk`'s `verify-packages` and `drift-and-docs` both `needs: publish`
+  and download `nupkg` in the same run; `vion-agent-windows`'s nightly conformance hands
+  `mender-conformance-round-trip` straight to the next job; the four `proof-*` workflows here do
+  the same with `fixture-win-x64-publish`, `conformance-round-trip`,
+  `fixture-mender-artifact-win-x64` and `sign-proof-tool`.
+
+  **Deliverable — 30 days, unchanged.** A person reads it, or a step fetches it after a wait.
+  `mender-conformance.yml`'s round-trip log is the only record of a nightly failure and nothing
+  downloads it; `sign-mender-artifact.yml`'s signed `.mender` is the release product, and a
+  caller whose deployment step waits on an environment approval collects it long after the
+  signing run.
+
+  Why the class and not a single number: v1.10.0 gave every one of these uploads 30 days, which is
+  right for the two a human reads and wrong by a factor of thirty for the four that die with their
+  run. The org is on the GitHub **Free** plan — 500 MB of Actions storage, a hard stop that blocks
+  every publish in every repository once reached, not a bill. On 2026-09-10 unexpired artifacts
+  stood at 2.55 GB and the quota blocked the `cloud-api` publish and the `artifacts-mender` suite
+  deploy. Measured against the artifacts and run history that exist today rather than against a
+  peak day: `publish-nuget.yml` runs 7.5 times a day for `dale-sdk` at 3.8 MB a run, and
+  `dotnet-win-x64.yml` produces 100.6 MB per `vion-agent-windows` CI run and 50.5 MB per nightly
+  conformance run. Held for 30 days those three alone settle near **3.8 GB**, seven times a cap
+  that is a stop rather than a bill; held for one day they settle near **127 MB**. `mesh` reached
+  the same answer on its own uploads before this
+  (`retention-days: 1` plus a delete-artifact job); this makes it the shared default so consumers
+  inherit it through `@v1` without editing anything.
+
+  Non-breaking: no input is added, renamed or removed, and no upload became conditional. Three
+  defaults changed. A caller that passes `artifact-retention-days` explicitly keeps exactly the
+  value it passes.
+
+- **`proof-mender-conformance.yml`, `proof-sign-mender-artifact.yml`** — both now pass
+  `artifact-retention-days: 1` into the reusable workflow they exercise. In a real caller
+  `mender-conformance-logs` and the signed `.mender` are deliverables; in a proof that fires on
+  every Windows-lane PR they are scratch that only the next job of the same run reads. The other
+  two proofs need no change — they inherit 1 day from the hand-off defaults above.
+
+## v1.10.0 — 2026-09-10
+
 ### Added
 
 - **Every reusable workflow that uploads an artifact** — new optional input

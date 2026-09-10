@@ -70,6 +70,12 @@ jobs:
       # agent. vion-agent-windows' is VION_AGENT_Agent__Identity__DeviceIdOverride.
       device-id-environment-variable: VION_FIXTURE_DEVICE_ID
       timeout-minutes: 10
+      # The template keeps its round-trip log for 30 days because a real caller's nightly
+      # failure is read by a person days later. Here the proof is the reader and it reads the
+      # job, not the artifact: this is scratch, so it takes the hand-off retention. Written as
+      # a literal rather than the `SCRATCH_RETENTION_DAYS`-style constant the proofs use in
+      # step blocks — the `env` context is not available in a reusable-workflow `with:`.
+      artifact-retention-days: 1
     secrets:
       # A synthetic identifier, not a fleet device: a conformance run reports deployment status to
       # the server under whatever identity it authenticates as, so it must never borrow a real
