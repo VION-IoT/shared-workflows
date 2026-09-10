@@ -7,6 +7,40 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+### Added
+
+- **Every reusable workflow that uploads an artifact** — new optional input
+  **`artifact-retention-days`** (type `number`, default `30`), passed to that workflow's
+  `actions/upload-artifact` step: `dotnet-win-x64.yml`, `mender-conformance.yml`,
+  `publish-nuget.yml`, `sign-mender-artifact.yml`, `vendored-go-build.yml`. `dotnet-ci.yml` and
+  `deploy-aks.yml` upload nothing and are untouched.
+
+  On 2026-09-09 the org hit its GitHub Actions artifact storage quota — "Artifact storage quota
+  has been hit. Unable to upload any new artifacts" — and a `cloud-api` build failed in its
+  publish job. 2.39 GB of unexpired artifacts were sitting in the org, and most of it had been
+  uploaded by these workflows on behalf of their consumers: `vion-agent-windows` alone accounted
+  for 0.63 GB and has no `upload-artifact` step of its own, every one of its uploads coming from
+  `dotnet-win-x64.yml` and `mender-conformance.yml` here. GitHub's default retention is 90 days,
+  and none of these artifacts are read 90 days later — the publish output, the signed `.mender`,
+  the conformance log and the build output are all consumed inside the run that produced them or
+  shortly after by a human reading a failure.
+
+  Setting it here rather than in each consumer is the point: the retention travels with the
+  `@v1` pin, so a consumer inherits 30 days without editing anything. It is an input rather than
+  a literal because the decision is the *default*, not a ceiling — a consumer that genuinely
+  needs an artifact to outlive a month (a release binary a later job fetches days after the fact)
+  says so explicitly at the call site instead of losing it silently.
+
+  Non-breaking: a new optional input with a default. Existing callers pass nothing and get 30 days.
+
+### Changed
+
+- **`proof-sign-mender-artifact.yml`** — its own `sign-proof-input` staging upload now carries a
+  1-day retention. It is not a consumer artifact: it hands the staged `.mender` and the freshly
+  built tool from the `stage` job to the signing job inside one run, and the proof fires on every
+  PR touching the Windows lane. It is deliberately *not* on the 30-day default the reusable
+  workflows now carry.
+
 ## v1.9.0 — 2026-09-04
 
 ### Added

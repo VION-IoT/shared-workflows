@@ -77,6 +77,16 @@ on:
         type: string
         default: ''
         description: Name for the uploaded signed artifact. Defaults to '<artifact-name>-signed'.
+      artifact-retention-days:
+        required: false
+        type: number
+        default: 30
+        description: >-
+          Days GitHub keeps the uploaded signed artifact before expiring it. Defaults to 30 rather than the
+          repository's 90: on 2026-09-09 the org hit its Actions artifact storage quota and a
+          publish failed with nothing left to upload into. Pass a larger value only if something
+          downloads this artifact later than that — a consumer that reads it inside the same run
+          never needs to.
       runs-on:
         required: false
         type: string
@@ -214,3 +224,4 @@ jobs:
           name: ${{ inputs.signed-artifact-name != '' && inputs.signed-artifact-name || format('{0}-signed', inputs.artifact-name) }}
           path: signed/*
           if-no-files-found: error
+          retention-days: ${{ inputs.artifact-retention-days }}

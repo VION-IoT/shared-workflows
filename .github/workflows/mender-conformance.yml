@@ -139,6 +139,16 @@ on:
         required: false
         type: string
         default: 'mender-conformance-logs'
+      artifact-retention-days:
+        required: false
+        type: number
+        default: 30
+        description: >-
+          Days GitHub keeps the uploaded round-trip log before expiring it. Defaults to 30 rather than the
+          repository's 90: on 2026-09-09 the org hit its Actions artifact storage quota and a
+          publish failed with nothing left to upload into. Pass a larger value only if something
+          downloads this artifact later than that — a consumer that reads it inside the same run
+          never needs to.
       runs-on:
         required: false
         type: string
@@ -343,3 +353,4 @@ jobs:
           name: ${{ inputs.logs-artifact-name }}
           path: ${{ env.CONFORMANCE_LOG }}
           if-no-files-found: warn
+          retention-days: ${{ inputs.artifact-retention-days }}

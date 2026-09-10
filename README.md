@@ -67,6 +67,10 @@ Pin to a floating major tag (`@v1`) for low-friction updates, or to an
 exact tag (`@v1.2.3`) for production-critical pipelines. Major-version
 bumps signal breaking changes — see `CHANGELOG.md`.
 
+Every workflow artifact these workflows upload expires after **30 days**;
+a caller that needs one to live longer (or shorter) passes
+`artifact-retention-days` explicitly.
+
 ### Using a composite action
 
 ```yaml
