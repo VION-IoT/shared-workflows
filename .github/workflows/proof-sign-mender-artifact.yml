@@ -25,11 +25,13 @@ on:
 permissions:
   contents: read
 
-# `sign-proof-input` below is scratch: it hands the staged .mender and the freshly built tool to
-# the signing job inside one run, and nothing reads it afterwards except a human looking at a
-# failed proof. It is not a consumer artifact, so it does not take the reusable workflows'
-# 30-day `artifact-retention-days` default — the proofs fire on every PR touching the Windows
-# lane and this is the one upload in the repository whose whole life is a single run.
+# `sign-proof-input` below is a hand-off: it carries the staged .mender and the freshly built tool
+# to the signing job inside one run, and nothing reads it afterwards except a human looking at a
+# failed proof. Every artifact this proof touches is of that class — see the artifact-retention
+# section of README.md — and the proofs fire on every PR touching the Windows lane, so all of them
+# live one day. This constant is the value for the uploads written as steps; the two reusable
+# workflows called below take it through their `artifact-retention-days` input instead, because
+# the `env` context is not available in a `uses:` job's `with:` block.
 env:
   SCRATCH_RETENTION_DAYS: 1
 
@@ -109,6 +111,12 @@ jobs:
       mender-glob: 'unsigned.mender'
       mender-artifact: ./mender-artifact
       signed-artifact-name: sign-proof-signed
+      # The signing workflow keeps its signed artifact for 30 days because for a real caller it
+      # is the release product. `sign-proof-signed` is a 5 KB fixture that the `assert` job below
+      # reads and nothing else ever will, so it takes the hand-off retention. A literal rather
+      # than SCRATCH_RETENTION_DAYS because the `env` context is not available in the `with:` of
+      # a reusable-workflow job — see the comment on that constant above.
+      artifact-retention-days: 1
     secrets:
       ARTIFACT_SIGNING_KEY: ${{ needs.stage.outputs.signing-key }}
 

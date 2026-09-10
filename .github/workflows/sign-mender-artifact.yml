@@ -82,11 +82,14 @@ on:
         type: number
         default: 30
         description: >-
-          Days GitHub keeps the uploaded signed artifact before expiring it. Defaults to 30 rather than the
-          repository's 90: on 2026-09-09 the org hit its Actions artifact storage quota and a
-          publish failed with nothing left to upload into. Pass a larger value only if something
-          downloads this artifact later than that — a consumer that reads it inside the same run
-          never needs to.
+          Days GitHub keeps the uploaded signed artifact before expiring it. This upload is a
+          **deliverable**, not a hand-off: the signed `.mender` is the release product, and
+          a caller whose deployment step waits on an environment approval fetches it long
+          after the signing run finished. It therefore keeps 30 days rather than the
+          single day the hand-off uploads carry; see the artifact-retention section of
+          README.md. GitHub's own default is 90, which is longer than anything here is read —
+          the org is on the Free plan (500 MB of Actions storage) and hit that quota on
+          2026-09-09.
       runs-on:
         required: false
         type: string

@@ -37,13 +37,17 @@ on:
       artifact-retention-days:
         required: false
         type: number
-        default: 30
+        default: 1
         description: >-
-          Days GitHub keeps the uploaded .nupkg/.snupkg before expiring it. Defaults to 30 rather than the
-          repository's 90: on 2026-09-09 the org hit its Actions artifact storage quota and a
-          publish failed with nothing left to upload into. Pass a larger value only if something
-          downloads this artifact later than that — a consumer that reads it inside the same run
-          never needs to.
+          Days GitHub keeps the uploaded package before expiring it. This upload is a
+          **hand-off** — it carries the package to the next job of the same run and nothing
+          reads it after that; see the artifact-retention section of README.md. One day is
+          GitHub's minimum and the correct value for that shape, so it is the default rather
+          than something every caller has to remember. The org is on the GitHub Free plan
+          (500 MB of Actions storage) and that quota stopped publishes org-wide on 2026-09-09
+          and again on 2026-09-10, with per-run build outputs kept for weeks most of it.
+          Raise it only if something in your repository genuinely reads this artifact days
+          after the run, and name that reader at the call site.
       push-to-nuget-org:
         required: false
         type: boolean
