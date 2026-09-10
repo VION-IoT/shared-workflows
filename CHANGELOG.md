@@ -33,9 +33,12 @@ input/output rename or removal is a breaking change, additions are not.
   run. The org is on the GitHub **Free** plan — 500 MB of Actions storage, a hard stop that blocks
   every publish in every repository once reached, not a bill. On 2026-09-10 unexpired artifacts
   stood at 2.55 GB and the quota blocked the `cloud-api` publish and the `artifacts-mender` suite
-  deploy. `dale-sdk` alone had 210 `nupkg` artifacts (816 MB) from ~30 runs a day, every one of
-  them uploaded by `publish-nuget.yml`; at 30 days it would have settled near 3.6 GB, and at 1 day
-  it settles near 120 MB. `mesh` reached the same answer on its own uploads before this
+  deploy. Measured against the artifacts and run history that exist today rather than against a
+  peak day: `publish-nuget.yml` runs 7.5 times a day for `dale-sdk` at 3.8 MB a run, and
+  `dotnet-win-x64.yml` produces 100.6 MB per `vion-agent-windows` CI run and 50.5 MB per nightly
+  conformance run. Held for 30 days those three alone settle near **3.8 GB**, seven times a cap
+  that is a stop rather than a bill; held for one day they settle near **127 MB**. `mesh` reached
+  the same answer on its own uploads before this
   (`retention-days: 1` plus a delete-artifact job); this makes it the shared default so consumers
   inherit it through `@v1` without editing anything.
 
