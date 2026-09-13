@@ -1,0 +1,114 @@
+name: Proof — journal lint
+# In-repo proof for the composite action `actions/journal-lint`, run against the fixtures under
+# `tests/fixtures/journal/`.
+#
+# `good.md` must pass as committed and again as UTF-8 with a BOM and CRLF line endings. That second
+# form is written by the job rather than committed, because `.gitattributes` normalises every text
+# file to LF and a committed CRLF fixture would reach the runner as LF.
+#
+# `bad.md`, `no-window.md` and a path that does not exist must each fail, and the assertion that
+# matters is on the findings, not only the outcome: a lint that fails for the wrong reason, or
+# reports one case and misses the next, says nothing. Each fixture's findings must name exactly the
+# expected lines — every case in `bad.md` is one finding on one line.
+
+on:
+  pull_request:
+    paths:
+      - 'actions/journal-lint/**'
+      - 'tests/fixtures/journal/**'
+      - '.github/workflows/proof-journal-lint.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  good:
+    name: A valid journal passes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint good.md as committed
+        uses: ./actions/journal-lint
+        with:
+          path: tests/fixtures/journal/good.md
+
+      - name: Write good.md with a BOM and CRLF line endings
+        shell: pwsh
+        run: |
+          $text = [System.IO.File]::ReadAllText('tests/fixtures/journal/good.md') -replace "`r?`n", "`r`n"
+          [System.IO.File]::WriteAllText("$env:RUNNER_TEMP/good-bom-crlf.md", $text, [System.Text.UTF8Encoding]::new($true))
+
+      - name: Lint good.md with a BOM and CRLF line endings
+        uses: ./actions/journal-lint
+        with:
+          path: ${{ runner.temp }}/good-bom-crlf.md
+
+  bad:
+    name: An invalid journal fails, naming every finding
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint bad.md
+        id: bad
+        continue-on-error: true
+        uses: ./actions/journal-lint
+        with:
+          path: tests/fixtures/journal/bad.md
+
+      - name: Lint no-window.md
+        id: no-window
+        continue-on-error: true
+        uses: ./actions/journal-lint
+        with:
+          path: tests/fixtures/journal/no-window.md
+
+      - name: Lint a journal that does not exist
+        id: missing
+        continue-on-error: true
+        uses: ./actions/journal-lint
+        with:
+          path: tests/fixtures/journal/missing.md
+
+      - name: Assert each failed on exactly the expected lines
+        shell: pwsh
+        env:
+          BAD_OUTCOME: ${{ steps.bad.outcome }}
+          BAD_FINDINGS: ${{ steps.bad.outputs.findings }}
+          NO_WINDOW_OUTCOME: ${{ steps.no-window.outcome }}
+          NO_WINDOW_FINDINGS: ${{ steps.no-window.outputs.findings }}
+          MISSING_OUTCOME: ${{ steps.missing.outcome }}
+          MISSING_FINDINGS: ${{ steps.missing.outputs.findings }}
+        run: |
+          # The line numbers of bad.md's cases, in file order: a continuation with no entry above it,
+          # an unknown where, a date earlier than the entry above, an entry over 400 characters, a
+          # line after a blank that continues nothing, a hyphen separator, a pipe separator, a
+          # malformed date.
+          $cases = @(
+              @{ Name = 'bad.md';        Outcome = $env:BAD_OUTCOME;       Findings = $env:BAD_FINDINGS;       File = 'tests/fixtures/journal/bad.md';       Lines = @(9, 11, 12, 13, 18, 19, 20, 21) }
+              @{ Name = 'no-window.md';  Outcome = $env:NO_WINDOW_OUTCOME; Findings = $env:NO_WINDOW_FINDINGS; File = 'tests/fixtures/journal/no-window.md'; Lines = @(0) }
+              @{ Name = 'a missing file'; Outcome = $env:MISSING_OUTCOME;  Findings = $env:MISSING_FINDINGS;   File = 'tests/fixtures/journal/missing.md';   Lines = @(0) }
+          )
+
+          $failed = $false
+          foreach ($case in $cases) {
+              Write-Host "== $($case.Name): outcome '$($case.Outcome)'"
+              Write-Host $case.Findings
+              if ($case.Outcome -ne 'failure') {
+                  Write-Host "::error::$($case.Name): expected the lint step to fail, got '$($case.Outcome)'"
+                  $failed = $true
+                  continue
+              }
+              $prefix = [regex]::Escape("$($case.File):")
+              $found = @([regex]::Matches($case.Findings, "(?m)^$prefix(\d+): ") | ForEach-Object { [int]$_.Groups[1].Value })
+              $expected = ($case.Lines | Sort-Object) -join ','
+              $actual = ($found | Sort-Object) -join ','
+              if ($actual -ne $expected) {
+                  Write-Host "::error::$($case.Name): expected findings on lines $expected, got $actual"
+                  $failed = $true
+              }
+          }
+          if ($failed) { exit 1 }
+          Write-Host 'Every invalid journal failed, each on exactly its expected lines.'
