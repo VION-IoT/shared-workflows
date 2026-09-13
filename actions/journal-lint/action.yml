@@ -1,0 +1,55 @@
+name: Process journal lint
+description: |
+  Checks the live window of a repository's process journal against the one VION journal grammar,
+  so every repo that keeps a journal is held to the same shape by one step instead of its own
+  linter.
+
+  Checks, below the last `<!-- retro-N marker -->` (or below `## Entries` when there is no
+  marker): every entry is `YYYY-MM-DD · <where> · <topic or —> · <what happened>`, with `where` one
+  of `review`, `gate`, `brief`, `decision`, `manual`; dates never decrease; an entry, its wrapped
+  lines joined with single spaces, is at most `max-chars` characters; and every other line is a
+  continuation directly after its entry, a blank line, or a one-line HTML comment. Lines above the
+  window are not read, so entries rotated before a repo adopted this grammar keep their old
+  vocabulary. A missing journal, or one with neither marker nor heading, fails.
+
+  Reports only: prints one `file:line: message` per finding (line 0 is the file as a whole) and
+  fails the step on any; it never rewrites the journal. The same script runs locally before a push:
+  `pwsh -NoProfile -File actions/journal-lint/journal-lint.ps1 -Path docs/process-journal.md`.
+
+  The caller runs `actions/checkout` first; the runner needs PowerShell 7 (`pwsh`). The grammar is
+  owned by `plugins/vion-improve/templates/journal.md` in the architecture repo, the header every
+  opting-in journal is copied from; this action enforces it and takes no per-repo vocabulary.
+
+inputs:
+  path:
+    description: Path to the journal, relative to the workspace
+    required: false
+    default: docs/process-journal.md
+  max-chars:
+    description: Longest allowed entry, in characters, with its wrapped lines joined by single spaces
+    required: false
+    default: '400'
+
+outputs:
+  findings:
+    description: "The findings, one `file:line: message` per line; empty when the journal is clean"
+    value: ${{ steps.lint.outputs.findings }}
+
+runs:
+  using: composite
+  steps:
+    - name: Lint the process journal
+      id: lint
+      shell: pwsh
+      env:
+        JOURNAL_PATH: ${{ inputs.path }}
+        MAX_CHARS: ${{ inputs.max-chars }}
+      run: |
+        $findings = @(& (Join-Path $env:GITHUB_ACTION_PATH 'journal-lint.ps1') -Path $env:JOURNAL_PATH -MaxChars $env:MAX_CHARS)
+        $code = $LASTEXITCODE
+        $findings | Write-Output
+        $delimiter = "FINDINGS_$([guid]::NewGuid().ToString('N'))"
+        "findings<<$delimiter" | Out-File $env:GITHUB_OUTPUT -Append
+        $findings              | Out-File $env:GITHUB_OUTPUT -Append
+        $delimiter             | Out-File $env:GITHUB_OUTPUT -Append
+        exit $code
