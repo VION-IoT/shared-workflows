@@ -49,6 +49,13 @@ are the regression tests for these workflows; read them before changing an input
 | `setup-nuget-private-feed` | Register the VION internal NuGet feed; URL hidden inside the action and masked in logs |
 | `docker-tags` | Wrap `docker/metadata-action` with the VION tag scheme |
 | `azure-aks-set-image` | OIDC Azure login + AKS context + `kubectl set image` + rollout wait |
+| `journal-lint` | Check the live window of `docs/process-journal.md` against the one VION journal grammar (entry shape, the five `where` values, date order, `max-chars`); reports, never rewrites. Needs `pwsh`. Proven by `proof-journal-lint.yml` |
+
+`journal-lint` is for the repos that keep a process journal: `architecture`, `cloud-api`, `dale`,
+`dale-sdk`, `dashboard` and `documentation`. Each adds the step in its own opt-in PR
+(`specs/in-flight/2026-09-12-process-unification.md` § 10), where `dale-sdk` and `dashboard` also
+retire their local linters. The grammar is owned by `plugins/vion-improve/templates/journal.md` in
+the architecture repo, not here.
 
 ## How to consume
 

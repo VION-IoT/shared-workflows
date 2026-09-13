@@ -7,6 +7,28 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+### Added
+
+- **`actions/journal-lint`** — new composite action that checks the live window of a process
+  journal against the one VION journal grammar, owned by `plugins/vion-improve/templates/journal.md`
+  in the architecture repo. Below the last `<!-- retro-N marker -->` (or `## Entries` when there is
+  none) every entry is `YYYY-MM-DD · <where> · <topic or —> · <what happened>` with `where` one of
+  `review`, `gate`, `brief`, `decision`, `manual`; dates never decrease; an entry is at most
+  `max-chars` characters (default `400`) with its wrapped lines joined; and every other line is a
+  continuation, a blank line or a one-line HTML comment. A missing journal fails. Inputs `path`
+  (default `docs/process-journal.md`) and `max-chars`; output `findings`, the same
+  `file:line: message` lines it prints. It reports and never rewrites.
+
+  Why here: `dale-sdk` and `dashboard` each carry their own linter with their own `where`
+  vocabulary, and the other journals have none. One grammar needs one gate, and a repo opts in by
+  adding one step (`specs/in-flight/2026-09-12-process-unification.md` § 8). The script runs the
+  same way locally — `pwsh -NoProfile -File actions/journal-lint/journal-lint.ps1 -Path <file>` —
+  so a journal can be checked before a push. `proof-journal-lint.yml` runs it on a valid fixture,
+  as committed and as BOM + CRLF, and on an invalid one whose every case must be reported on its
+  own line.
+
+  Non-breaking: a new action; nothing existing changed.
+
 ### Changed
 
 - **Artifact retention is now decided by what the artifact is for, not by one org-wide number.**
