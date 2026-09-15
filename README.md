@@ -49,13 +49,16 @@ are the regression tests for these workflows; read them before changing an input
 | `setup-nuget-private-feed` | Register the VION internal NuGet feed; URL hidden inside the action and masked in logs |
 | `docker-tags` | Wrap `docker/metadata-action` with the VION tag scheme |
 | `azure-aks-set-image` | OIDC Azure login + AKS context + `kubectl set image` + rollout wait |
-| `journal-lint` | Check the live window of `docs/process-journal.md` against the one VION journal grammar (entry shape, the five `where` values, date order, `max-chars`); reports, never rewrites. Needs `pwsh`. Proven by `proof-journal-lint.yml` |
+| `journal-lint` | Check the live window of `docs/process-journal.md`, or every fragment in a `docs/process-journal/` folder, against the one VION journal grammar (entry shape, the five `where` values, date order, `max-chars`; for a folder also `README.md`, fragment names and each entry against its file name's date); reports, never rewrites. Needs `pwsh`. Proven by `proof-journal-lint.yml` |
 
 `journal-lint` is for the repos that keep a process journal: `architecture`, `cloud-api`, `dale`,
-`dale-sdk`, `dashboard` and `documentation`. Each adds the step in its own opt-in PR
-(`specs/in-flight/2026-09-12-process-unification.md` § 10), where `dale-sdk` and `dashboard` also
-retire their local linters. The grammar is owned by `plugins/vion-improve/templates/journal.md` in
-the architecture repo, not here.
+`dale-sdk`, `dashboard`, `documentation`, `website` and `logic-block-libraries`. Each adds the step
+in its own opt-in PR (`specs/in-flight/2026-09-12-process-unification.md` § 10), where `dale-sdk`
+and `dashboard` also retire their local linters. The default `path` lints the file while a repo has
+one and the folder once it has moved to one fragment per branch
+(`specs/in-flight/2026-09-15-journal-fragments.md`), so no caller changes its step for the move.
+The grammar is owned by `plugins/vion-improve/templates/journal.md` in the architecture repo, not
+here.
 
 ## How to consume
 

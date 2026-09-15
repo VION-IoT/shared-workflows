@@ -12,9 +12,20 @@ description: |
   window are not read, so entries rotated before a repo adopted this grammar keep their old
   vocabulary. A missing journal, or one with neither marker nor heading, fails.
 
-  Reports only: prints one `file:line: message` per finding (line 0 is the file as a whole) and
-  fails the step on any; it never rewrites the journal. The same script runs locally before a push:
-  `pwsh -NoProfile -File actions/journal-lint/journal-lint.ps1 -Path docs/process-journal.md`.
+  A journal can also be a folder, `docs/process-journal/`: a `README.md` header, which must exist
+  and is not read, and one fragment per branch named `YYYY-MM-DD-<branch>.md` — `<branch>` of
+  `a-z`, `0-9` and `-`, neither starting nor ending with `-`, the name at most 80 characters and its
+  date a real one. No subfolders, and hidden entries count. Each fragment is its own window, the
+  whole file, held to the line checks above; in it no entry is dated earlier than the file name's
+  date. A folder holding only `README.md` passes. `path` names the file or the folder, and when a
+  `.md` path does not exist but the same path without `.md` is a folder, that folder is linted — so
+  the default keeps working after a repo moves its journal into the folder.
+
+  Reports only: prints one `file:line: message` per finding, sorted by file then line (line 0 is
+  the file, or the folder, as a whole) and fails the step on any; it never rewrites the journal. A
+  fragment's findings name the fragment. The same script runs locally before a push:
+  `pwsh -NoProfile -File actions/journal-lint/journal-lint.ps1 -Path docs/process-journal.md`, or
+  `-Path docs/process-journal` for a folder.
 
   The caller runs `actions/checkout` first; the runner needs PowerShell 7 (`pwsh`). The grammar is
   owned by `plugins/vion-improve/templates/journal.md` in the architecture repo, the header every
@@ -22,7 +33,7 @@ description: |
 
 inputs:
   path:
-    description: Path to the journal, relative to the workspace
+    description: Path to the journal file or folder, relative to the workspace; a missing `.md` file falls back to the folder of the same name
     required: false
     default: docs/process-journal.md
   max-chars:
