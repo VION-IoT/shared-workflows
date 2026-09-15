@@ -37,10 +37,9 @@ input/output rename or removal is a breaking change, additions are not.
   check gates merges, not a tag push.
 
   Why: in `dale-sdk` a PR run is 9:10, and the style verify is 3:23 of it, queued behind 3:25 of
-  tests on the same runner (run 34960108694). Whether that check can run on its own runner without
-  the build is the caller's to prove, and `dale-sdk` does so in the change that adopts this input.
-  `proof-dotnet-gate.yml` plants a stand-in style script and asserts that `false` never calls it
-  and the default calls it with `-Verify -NoBuild`.
+  tests on the same runner (run 34960108694). The switch is one `if:` beside the existing
+  `run-tests` one and has no proof workflow of its own; the first `dale-sdk` run on the moved `v1`
+  shows the gate's style step skipped and its own style job running.
 
   Non-breaking: new optional inputs whose defaults keep every existing caller as it is.
   `publish-nuget.yml` reaches the gate through `dotnet-gate@v1`, so its `run-style` takes effect once
