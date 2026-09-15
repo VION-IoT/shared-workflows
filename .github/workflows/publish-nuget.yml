@@ -6,12 +6,14 @@ name: Publish NuGet
 # With `gate: true`, runs the shared build + test + style gate
 # (actions/dotnet-gate) in the same job before packing — one build, and a
 # release can't ship with failing tests or style drift. Off by default.
+# `run-style: false` leaves the style verify out of the gate, for a caller
+# that runs it in a job of its own.
 #
 # Caller is responsible for:
 #   - holding AZURE_DEVOPS_PAT and NUGET_API_KEY secrets
 #   - passing `secrets: inherit` (or naming each secret explicitly)
 #   - granting `contents: read` permission
-#   - when `gate: true`: providing scripts/cleanup-code.ps1,
+#   - when `gate: true` and `run-style` is not false: providing scripts/cleanup-code.ps1,
 #     .config/dotnet-tools.json, and a .sln.DotSettings cleanup profile
 #
 # Note: nuget.org Trusted Publishing does not currently work with
@@ -71,6 +73,15 @@ on:
           Optional VSTest --filter applied to the gate's `dotnet test` (only when gate is
           true). Use to keep environment-dependent tests out of the release gate, e.g.
           'FullyQualifiedName!~IntegrationTest'.
+      run-style:
+        required: false
+        type: boolean
+        default: true
+        description: >
+          Run the gate's code-style verify (only when gate is true). Set false when the caller
+          runs scripts/cleanup-code.ps1 in a job of its own, beside this one instead of after its
+          tests. The packages no longer wait for that check, so "a release can't ship with style
+          drift" then holds only if the caller makes the style job required or a `needs` of this one.
       runs-on:
         required: false
         type: string
@@ -130,6 +141,7 @@ jobs:
           configuration: Release
           version: ${{ steps.version.outputs.version }}
           test-filter: ${{ inputs.test-filter }}
+          run-style: ${{ inputs.run-style }}
 
       # gate: false (default) → plain build, unchanged behavior for existing consumers.
       - name: Build
