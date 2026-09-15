@@ -29,6 +29,24 @@ input/output rename or removal is a breaking change, additions are not.
 
   Non-breaking: a new action; nothing existing changed.
 
+- **`run-style` on `actions/dotnet-gate` and `publish-nuget.yml`** — default `true`, which is
+  today's behaviour. `false` leaves out the `scripts/cleanup-code.ps1 -Verify -NoBuild` step, so a
+  caller can run the style check in a job of its own, beside the build and tests instead of after
+  them. `publish-nuget.yml` passes its input to the gate. The packages then no longer wait for the
+  style check: only a `needs:` on the caller's style job holds them back, since a required status
+  check gates merges, not a tag push.
+
+  Why: in `dale-sdk` a PR run is 9:10, and the style verify is 3:23 of it, queued behind 3:25 of
+  tests on the same runner (run 34960108694). The switch is one `if:` beside the existing
+  `run-tests` one and has no proof workflow of its own. Its proof is the run of the `dale-sdk` pull
+  request that adopts `run-style: false`, on the moved `v1`: the gate's style step skipped and that
+  repository's own `style` job running, which it does because the change edits
+  `scripts/cleanup-code.ps1`.
+
+  Non-breaking: new optional inputs whose defaults keep every existing caller as it is. A caller can
+  pass `run-style` to `publish-nuget.yml@v1` only once `v1` carries this change — a reusable workflow
+  rejects an input it does not declare, before any job starts.
+
 ### Changed
 
 - **Artifact retention is now decided by what the artifact is for, not by one org-wide number.**
