@@ -44,7 +44,8 @@ inputs:
     description: >
       Verify code style with the caller's `scripts/cleanup-code.ps1` after the tests. Set 'false'
       when the caller runs that script in a job of its own, so the style check runs beside the
-      build and tests instead of after them; the caller then owns making that job a required check.
+      build and tests instead of after them. The caller then owns what waits for that job: a
+      required status check for merges, a `needs:` for anything that publishes.
     required: false
     default: 'true'
 
