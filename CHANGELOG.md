@@ -32,15 +32,15 @@ input/output rename or removal is a breaking change, additions are not.
 - **`run-style` on `actions/dotnet-gate` and `publish-nuget.yml`** — default `true`, which is
   today's behaviour. `false` leaves out the `scripts/cleanup-code.ps1 -Verify -NoBuild` step, so a
   caller can run the style check in a job of its own, beside the build and tests instead of after
-  them. `publish-nuget.yml` passes its input to the gate. The caller then decides whether packages
-  wait for that job: in `publish-nuget.yml` they no longer do.
+  them. `publish-nuget.yml` passes its input to the gate. The packages then no longer wait for the
+  style check: only a `needs:` on the caller's style job holds them back, since a required status
+  check gates merges, not a tag push.
 
   Why: in `dale-sdk` a PR run is 9:10, and the style verify is 3:23 of it, queued behind 3:25 of
-  tests on the same runner (run 34960108694). It needs no build output — a full `-Verify -NoBuild`
-  on a restored, never-built checkout of `dale-sdk` reported clean with no assembly under any
-  `bin/` — so it can run in parallel on its own runner. `proof-dotnet-gate.yml` plants a stand-in
-  style script and asserts that `false` never calls it and the default calls it with
-  `-Verify -NoBuild`.
+  tests on the same runner (run 34960108694). Whether that check can run on its own runner without
+  the build is the caller's to prove, and `dale-sdk` does so in the change that adopts this input.
+  `proof-dotnet-gate.yml` plants a stand-in style script and asserts that `false` never calls it
+  and the default calls it with `-Verify -NoBuild`.
 
   Non-breaking: new optional inputs whose defaults keep every existing caller as it is.
   `publish-nuget.yml` reaches the gate through `dotnet-gate@v1`, so its `run-style` takes effect once
