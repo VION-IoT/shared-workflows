@@ -38,13 +38,14 @@ input/output rename or removal is a breaking change, additions are not.
 
   Why: in `dale-sdk` a PR run is 9:10, and the style verify is 3:23 of it, queued behind 3:25 of
   tests on the same runner (run 34960108694). The switch is one `if:` beside the existing
-  `run-tests` one and has no proof workflow of its own; the first `dale-sdk` run on the moved `v1`
-  shows the gate's style step skipped and its own style job running.
+  `run-tests` one and has no proof workflow of its own. Its proof is the run of the `dale-sdk` pull
+  request that adopts `run-style: false`, on the moved `v1`: the gate's style step skipped and that
+  repository's own `style` job running, which it does because the change edits
+  `scripts/cleanup-code.ps1`.
 
-  Non-breaking: new optional inputs whose defaults keep every existing caller as it is.
-  `publish-nuget.yml` reaches the gate through `dotnet-gate@v1`, so its `run-style` takes effect once
-  `v1` carries this change; before that the gate ignores the unknown input and still runs the style
-  step.
+  Non-breaking: new optional inputs whose defaults keep every existing caller as it is. A caller can
+  pass `run-style` to `publish-nuget.yml@v1` only once `v1` carries this change — a reusable workflow
+  rejects an input it does not declare, before any job starts.
 
 ### Changed
 
