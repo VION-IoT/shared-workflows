@@ -10,6 +10,14 @@ name: Proof — journal lint
 # matters is on the findings, not only the outcome: a lint that fails for the wrong reason, or
 # reports one case and misses the next, says nothing. Each fixture's findings must name exactly the
 # expected lines — every case in `bad.md` is one finding on one line.
+#
+# Folder mode gets the same treatment, asserted by file and line because its findings span files:
+# `fragments-good/` passes and `fragments-bad/` names exactly its expected `file:line` set. The
+# cases git cannot hold, or holds too easily lost — a folder with no `README.md`, one with a
+# subfolder, one with a hidden `.gitkeep` — and a folder holding only `README.md` are written by the
+# job. So is the `.md`-to-folder fallback: a `docs/process-journal/` at the workspace root, linted
+# with the default `path`, since a `uses:` step takes no `working-directory`. The valid and the
+# invalid fallback need a job each, because both use that one default path.
 
 on:
   pull_request:
@@ -112,3 +120,191 @@ jobs:
           }
           if ($failed) { exit 1 }
           Write-Host 'Every invalid journal failed, each on exactly its expected lines.'
+
+  fragments-good:
+    name: A valid journal folder passes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint fragments-good/ as committed
+        uses: ./actions/journal-lint
+        with:
+          path: tests/fixtures/journal/fragments-good/
+
+      - name: Write a folder holding only README.md
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory "$env:RUNNER_TEMP/readme-only" | Out-Null
+          Copy-Item tests/fixtures/journal/fragments-good/README.md "$env:RUNNER_TEMP/readme-only/"
+
+      - name: Lint the folder holding only README.md
+        uses: ./actions/journal-lint
+        with:
+          path: ${{ runner.temp }}/readme-only
+
+      - name: Write a valid docs/process-journal/ at the workspace root, with no docs/process-journal.md
+        shell: pwsh
+        run: |
+          if (Test-Path docs/process-journal.md) { throw 'docs/process-journal.md exists; the fallback would not be exercised' }
+          New-Item -ItemType Directory docs | Out-Null
+          Copy-Item tests/fixtures/journal/fragments-good docs/process-journal -Recurse
+
+      - name: Lint with the default path, which falls back to the folder
+        uses: ./actions/journal-lint
+
+  fragments-bad:
+    name: An invalid journal folder fails, naming every finding by file and line
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint fragments-bad/
+        id: bad
+        continue-on-error: true
+        uses: ./actions/journal-lint
+        with:
+          path: tests/fixtures/journal/fragments-bad
+
+      - name: Write a folder with no README.md, one with a subfolder, and one with a hidden file
+        shell: pwsh
+        run: |
+          $fragment = 'tests/fixtures/journal/fragments-good/2026-09-12-chore-readme.md'
+          $readme = 'tests/fixtures/journal/fragments-good/README.md'
+          $root = $env:RUNNER_TEMP
+          New-Item -ItemType Directory "$root/no-readme", "$root/subfolder/sub", "$root/hidden" | Out-Null
+          Copy-Item $fragment "$root/no-readme/"
+          Copy-Item $readme, $fragment "$root/subfolder/"
+          # A subfolder with a file in it, as git would hold one.
+          Copy-Item $fragment "$root/subfolder/sub/"
+          Copy-Item $readme, $fragment "$root/hidden/"
+          New-Item -ItemType File "$root/hidden/.gitkeep" | Out-Null
+
+      - name: Lint the folder with no README.md
+        id: no-readme
+        continue-on-error: true
+        uses: ./actions/journal-lint
+        with:
+          path: ${{ runner.temp }}/no-readme
+
+      - name: Lint the folder with a subfolder
+        id: subfolder
+        continue-on-error: true
+        uses: ./actions/journal-lint
+        with:
+          path: ${{ runner.temp }}/subfolder
+
+      - name: Lint the folder with a hidden file
+        id: hidden
+        continue-on-error: true
+        uses: ./actions/journal-lint
+        with:
+          path: ${{ runner.temp }}/hidden
+
+      - name: Assert each failed with exactly the expected findings
+        shell: pwsh
+        env:
+          BAD_OUTCOME: ${{ steps.bad.outcome }}
+          BAD_FINDINGS: ${{ steps.bad.outputs.findings }}
+          NO_README_OUTCOME: ${{ steps.no-readme.outcome }}
+          NO_README_FINDINGS: ${{ steps.no-readme.outputs.findings }}
+          SUBFOLDER_OUTCOME: ${{ steps.subfolder.outcome }}
+          SUBFOLDER_FINDINGS: ${{ steps.subfolder.outputs.findings }}
+          HIDDEN_OUTCOME: ${{ steps.hidden.outcome }}
+          HIDDEN_FINDINGS: ${{ steps.hidden.outputs.findings }}
+        run: |
+          $bad = 'tests/fixtures/journal/fragments-bad'
+          $root = $env:RUNNER_TEMP
+          # Every expected finding as `file:line` and a text its message must contain. A missing
+          # finding, or any other one, fails the case.
+          $cases = @(
+              @{ Name = 'fragments-bad/'; Outcome = $env:BAD_OUTCOME; Findings = $env:BAD_FINDINGS; Expected = @(
+                  , @("$bad/2026-02-30-x.md:0", 'not a real date')                 # the name's date is not a real date
+                  , @("$bad/2026-09-01-Feat-Upper.md:0", 'does not match')         # uppercase in the name: the match is case-sensitive
+                  , @("$bad/2026-09-02--leading.md:0", 'starts or ends with')      # the branch part starts with '-'
+                  , @("$bad/2026-09-02-trailing-.md:0", 'starts or ends with')     # the branch part ends with '-'
+                  , @("$bad/2026-09-04-feat-a-branch-name-one-character-past-the-sixty-six-that-names-keep.md:0", 'is 81 characters') # the name is over 80 characters
+                  , @("$bad/2026-09-10-feat-name-date.md:2", "file name's date")   # an entry earlier than the name's date, not than the entry above
+                  , @("$bad/2026-09-11-feat-entry-order.md:2", 'below an entry')   # an entry earlier than the entry above, not than the name's date
+                  , @("$bad/2026-09-13-feat-b-orphan-top.md:1", 'no entry above')  # a continuation at the top, after a fragment ending on an entry
+              ) }
+              @{ Name = 'a folder with no README.md'; Outcome = $env:NO_README_OUTCOME; Findings = $env:NO_README_FINDINGS; Expected = @(
+                  , @("$root/no-readme:0", 'README.md')
+              ) }
+              @{ Name = 'a folder with a subfolder'; Outcome = $env:SUBFOLDER_OUTCOME; Findings = $env:SUBFOLDER_FINDINGS; Expected = @(
+                  , @("$root/subfolder:0", "'sub' is a subfolder")
+              ) }
+              @{ Name = 'a folder with a hidden file'; Outcome = $env:HIDDEN_OUTCOME; Findings = $env:HIDDEN_FINDINGS; Expected = @(
+                  , @("$root/hidden/.gitkeep:0", "'.gitkeep' does not match")
+              ) }
+          )
+
+          $failed = $false
+          foreach ($case in $cases) {
+              Write-Host "== $($case.Name): outcome '$($case.Outcome)'"
+              Write-Host $case.Findings
+              if ($case.Outcome -ne 'failure') {
+                  Write-Host "::error::$($case.Name): expected the lint step to fail, got '$($case.Outcome)'"
+                  $failed = $true
+                  continue
+              }
+              $found = @($case.Findings -split "`n" | Where-Object { $_.Trim() -ne '' } | ForEach-Object {
+                  $m = [regex]::Match($_.TrimEnd(), '^(?<at>.+?:\d+): (?<message>.*)$')
+                  [pscustomobject]@{ At = $m.Groups['at'].Value; Message = $m.Groups['message'].Value }
+              })
+              $expected = @($case.Expected | ForEach-Object { $_[0] } | Sort-Object) -join ', '
+              $actual = @($found | ForEach-Object At | Sort-Object) -join ', '
+              if ($actual -cne $expected) {
+                  Write-Host "::error::$($case.Name): expected findings at $expected, got $actual"
+                  $failed = $true
+                  continue
+              }
+              foreach ($e in $case.Expected) {
+                  $f = $found | Where-Object { $_.At -ceq $e[0] }
+                  if (-not $f.Message.Contains($e[1])) {
+                      Write-Host "::error::$($case.Name): the finding at $($e[0]) does not say '$($e[1])': $($f.Message)"
+                      $failed = $true
+                  }
+              }
+          }
+          if ($failed) { exit 1 }
+          Write-Host 'Every invalid journal folder failed, with exactly its expected findings.'
+
+  fallback-bad:
+    name: The default path falls back to an invalid folder and fails, naming its fragment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Write docs/process-journal/ at the workspace root with one bad fragment, and no docs/process-journal.md
+        shell: pwsh
+        run: |
+          if (Test-Path docs/process-journal.md) { throw 'docs/process-journal.md exists; the fallback would not be exercised' }
+          New-Item -ItemType Directory docs | Out-Null
+          Copy-Item tests/fixtures/journal/fragments-good docs/process-journal -Recurse
+          [System.IO.File]::WriteAllText("$PWD/docs/process-journal/2026-09-14-feat-bad.md", "2026-09-14 · incident · — · An unknown where.`n")
+
+      - name: Lint with the default path
+        id: fallback
+        continue-on-error: true
+        uses: ./actions/journal-lint
+
+      - name: Assert it failed on exactly the bad fragment's line
+        shell: pwsh
+        env:
+          OUTCOME: ${{ steps.fallback.outcome }}
+          FINDINGS: ${{ steps.fallback.outputs.findings }}
+        run: |
+          Write-Host "== the fallback: outcome '$env:OUTCOME'"
+          Write-Host $env:FINDINGS
+          if ($env:OUTCOME -ne 'failure') {
+              Write-Host "::error::expected the lint step to fail, got '$env:OUTCOME'"
+              exit 1
+          }
+          $actual = @($env:FINDINGS -split "`n" | Where-Object { $_.Trim() -ne '' } | ForEach-Object { ($_ -split ': ', 2)[0] }) -join ', '
+          $expected = 'docs/process-journal/2026-09-14-feat-bad.md:1'
+          if ($actual -cne $expected) {
+              Write-Host "::error::expected findings at $expected, got $actual"
+              exit 1
+          }
+          Write-Host 'The default path fell back to the folder and named the bad fragment.'

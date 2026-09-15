@@ -9,6 +9,33 @@ input/output rename or removal is a breaking change, additions are not.
 
 ### Added
 
+- **Folder mode on `actions/journal-lint`** — the journal can be a folder, `docs/process-journal/`,
+  holding a `README.md` header and one fragment per branch named `YYYY-MM-DD-<branch>.md`. The
+  folder must have `README.md` (not linted) and no subfolder; every other entry, hidden ones
+  included, must match that name case-sensitively, with `<branch>` of `a-z`, `0-9` and `-` neither
+  starting nor ending with `-`, the name at most 80 characters and its date a real one. Each
+  fragment is linted with today's line checks and the whole file as its window — date order, the
+  open entry and the rest restart per fragment, and a retro marker in one is just an HTML comment —
+  and no entry may be dated earlier than its file name's date. A folder holding only `README.md`
+  passes. Findings keep the `file:line: message` form, naming the fragment (a folder-level finding
+  names the folder, line 0), and are sorted by file, then line.
+
+  `path` and `-Path` keep their default `docs/process-journal.md`: a directory is linted as a
+  folder, and a `.md` path that does not exist while the same path without `.md` is a directory
+  lints that directory. So every caller's `uses: …/journal-lint@v1` with no `with:` passes today on
+  the file and after its repo moves to the folder, and locally
+  `pwsh -NoProfile -File actions/journal-lint/journal-lint.ps1 -Path docs/process-journal` lints a
+  folder. When both exist the file is linted, as before.
+
+  Why: two branches that each append to the one journal file insert different lines at the same
+  position, which git reports as a conflict; a file per branch does not
+  (`specs/in-flight/2026-09-15-journal-fragments.md` § Part 2).
+  `proof-journal-lint.yml` adds `fragments-good/` and `fragments-bad/` asserted by file and line,
+  job-written folders with no `README.md`, a subfolder, a hidden file and only `README.md`, and the
+  fallback from the default path to a workspace-root `docs/process-journal/`, valid and invalid.
+
+  Non-breaking: no input, output or default changed; file mode's findings are unchanged.
+
 - **`actions/journal-lint`** — new composite action that checks the live window of a process
   journal against the one VION journal grammar, owned by `plugins/vion-improve/templates/journal.md`
   in the architecture repo. Below the last `<!-- retro-N marker -->` (or `## Entries` when there is
