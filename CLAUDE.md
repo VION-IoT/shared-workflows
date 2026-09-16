@@ -11,8 +11,9 @@
 # CLAUDE.md — VION shared workflows
 
 Reusable GitHub Actions workflows and composite actions that the VION-IoT repositories call at
-`@v1` or at an exact tag. The repository runs nothing of its own besides the `proof-*.yml` callers
-that exercise its workflows against `tests/fixtures/`. The inventory, the calling conventions, the
+`@v1` or at an exact tag. The repository runs only callers of its own workflows: the `proof-*.yml`
+workflows that exercise them against `tests/fixtures/`, and `close-prs.yml`, which closes pull
+requests from forks. The inventory, the calling conventions, the
 secrets model and the semver rules are in [`README.md`](README.md); they are not repeated here.
 Every change that reaches a consumer gets a line under `## Unreleased` in `CHANGELOG.md`.
 
@@ -74,7 +75,8 @@ Naming the `vion-git` skills below opts this repo into them.
 None run locally: CI is the gate. The regression tests are the `proof-*.yml` workflows, which run
 on the pull request, each only when the pull request touches one of its `paths`. Most need what a
 workstation lacks — a Windows runner, a live Mender server, the caller secrets. A pull request that
-touches no proof's `paths` has no checks, and the pull request says so rather than calling it green.
+touches no proof's `paths` runs no proof — the only check it shows is `close-prs.yml`'s job, skipped
+for a branch of this repository — and it says so rather than calling it green.
 `actions/journal-lint/journal-lint.ps1` runs locally for a quick loop, but its proof asserts the exact
 findings per fixture, and only the workflow checks that.
 
