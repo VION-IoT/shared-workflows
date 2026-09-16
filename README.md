@@ -119,7 +119,9 @@ Per-secret consumer map:
 
 ## Versioning
 
-- Annotated semver tags: `v1.0.0`, `v1.1.0`, …
+- Semver tags `vX.Y.Z`: lightweight from `v1.12.0` on (most earlier
+  ones are annotated), each with a GitHub release. Cut by the procedure
+  in `CLAUDE.md` § Releasing.
 - Floating major tag (`v1`) moves forward on each non-breaking release.
 - Breaking changes bump the major version and are documented in `CHANGELOG.md`.
 - Input/output rename or removal is a breaking change; additions are not.
