@@ -46,10 +46,8 @@ At the start of a task, answer two questions out loud: is the change local? is a
 ### Communication
 
 - Say what was run, not that it worked.
-- A count is pasted with the command that produced it.
-- Expand an initialism the first time it is used.
+- A claim a decision rests on names its evidence: the command, the file and line, or that it is inferred.
 - Promise no notification that cannot be subscribed to.
-- A finding cites the line, or says it is inferred.
 
 ### Never
 
@@ -79,6 +77,18 @@ touches no proof's `paths` runs no proof — the only check it shows is `close-p
 for a branch of this repository — and it says so rather than calling it green.
 `actions/journal-lint/journal-lint.ps1` runs locally for a quick loop, but its proof asserts the exact
 findings per fixture, and only the workflow checks that.
+
+### Reader depth
+
+Beyond `/vion-git:pr`'s defaults:
+
+- generated: `tests/fixtures/**`
+
+### Budgets
+
+`CLAUDE.md` 10,240 bytes; `docs/review-checks.md` ten checks. A file at or under its budget may not
+go over it; a file over it is touched only by a diff that makes it smaller than `origin/main`'s
+copy. Enforced by hand: nothing runs locally here, and no proof covers these paths.
 
 ## Parallel sessions
 
