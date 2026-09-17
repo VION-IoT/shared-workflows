@@ -88,7 +88,8 @@ Beyond `/vion-git:pr`'s defaults:
 
 `CLAUDE.md` 10,240 bytes; `docs/review-checks.md` ten checks. A file at or under its budget may not
 go over it; a file over it is touched only by a diff that makes it smaller than `origin/main`'s
-copy. Enforced by hand: nothing runs locally here, and no proof covers these paths.
+copy. Enforced by hand: nothing runs locally here, and no proof covers these paths. No retro runs
+here to prune checks at zero citations, so an eleventh check is a pull request that deletes one.
 
 ## Parallel sessions
 
