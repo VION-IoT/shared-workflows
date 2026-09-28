@@ -9,6 +9,10 @@ name: Publish NuGet
 # `run-style: false` leaves the style verify out of the gate, for a caller
 # that runs it in a job of its own.
 #
+# With `verify-script` set, runs the caller's script against the packed
+# packages after Pack and before either push; a non-zero exit fails the job,
+# so nothing is pushed. Unset by default: the step is skipped.
+#
 # Caller is responsible for:
 #   - holding AZURE_DEVOPS_PAT and NUGET_API_KEY secrets
 #   - passing `secrets: inherit` (or naming each secret explicitly)
@@ -92,6 +96,21 @@ on:
           Runner for the pack/gate job. A single label string (e.g. 'ubuntu-latest', or a
           self-hosted label), or a JSON-array string of labels (e.g. '["self-hosted","linux","x64"]')
           for multi-label self-hosted targeting. Defaults to 'ubuntu-latest' — unchanged for existing callers.
+      verify-script:
+        required: false
+        type: string
+        default: ''
+        description: >-
+          Path, relative to the repository root, of a PowerShell script in the caller's repository
+          that checks the packed packages before anything is pushed. It runs after Pack and before
+          Push to private feed as `pwsh -NoProfile -File <verify-script>`, from the repository root,
+          with two environment variables: PACKAGES_DIR, the absolute path of pack-output (every
+          .nupkg this job pushes is in it), and PACKAGE_VERSION, the version the job computed and
+          packed with (X.Y.Z on a vX.Y.Z tag, 0.0.0-ci.N otherwise). A non-zero exit fails the job,
+          and neither push runs. It gets no secret: neither value is one, and NUGET_API_KEY stays on
+          the nuget.org push step. Empty by default: the step is skipped. The workflow sets no
+          event condition of its own: a caller that wants it on release tags only passes an
+          expression that is empty on every other ref.
     secrets:
       AZURE_DEVOPS_PAT:
         required: true
@@ -155,6 +174,23 @@ jobs:
           dotnet pack "${{ inputs.solution }}" -c Release --no-build
           -p:Version=${{ steps.version.outputs.version }}
           -o "${{ inputs.pack-output }}"
+
+      # verify-script set → the caller's check on the packed packages, before either push. Its
+      # failure fails the job, and both pushes below carry no status function in their `if:`, so
+      # they skip. A child pwsh runs the script, so it sees the same preferences it would locally
+      # rather than this step's `$ErrorActionPreference = 'stop'`. The values arrive by env, not
+      # interpolated into `run:`. proof-publish-nuget.yml asserts this step's name, place and `if:`.
+      - name: Verify packages
+        if: inputs.verify-script != ''
+        shell: pwsh
+        env:
+          VERIFY_SCRIPT: ${{ inputs.verify-script }}
+          PACKAGES_DIR: ${{ inputs.pack-output }}
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $env:PACKAGES_DIR = (Resolve-Path -LiteralPath $env:PACKAGES_DIR).Path
+          pwsh -NoProfile -File $env:VERIFY_SCRIPT
+          exit $LASTEXITCODE
 
       - name: Push to private feed
         if: github.event_name != 'pull_request'
