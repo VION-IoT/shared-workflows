@@ -14,7 +14,9 @@ input/output rename or removal is a breaking change, additions are not.
   pushed. The `pack` job runs it after Pack and before Push to private feed, as
   `pwsh -NoProfile -File <verify-script>` from the repository root, with `PACKAGES_DIR` (the absolute
   path of `pack-output`) and `PACKAGE_VERSION` (the version the job computed and packed with) in its
-  environment. A non-zero exit fails the job, so neither push runs. The script gets no secret.
+  environment. A non-zero exit fails the job, so neither push runs. No secret is passed to the
+  script, but what earlier steps left on the runner is readable to it — the private-feed PAT that
+  `setup-nuget-private-feed` writes to the user NuGet.Config, and the checkout's token.
   The workflow adds no event condition: a caller that wants it on release tags only passes an
   expression that is empty everywhere else.
 

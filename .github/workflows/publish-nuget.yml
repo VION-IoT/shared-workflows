@@ -107,8 +107,11 @@ on:
           with two environment variables: PACKAGES_DIR, the absolute path of pack-output (every
           .nupkg this job pushes is in it), and PACKAGE_VERSION, the version the job computed and
           packed with (X.Y.Z on a vX.Y.Z tag, 0.0.0-ci.N otherwise). A non-zero exit fails the job,
-          and neither push runs. It gets no secret: neither value is one, and NUGET_API_KEY stays on
-          the nuget.org push step. Empty by default: the step is skipped. The workflow sets no
+          and neither push runs. No secret is passed to it (NUGET_API_KEY stays on the nuget.org
+          push step), but it runs in the job, so what earlier steps left on the runner is readable to
+          it — the private-feed PAT in the user NuGet.Config, and the checkout's token — and a
+          script you would not trust with those does not belong here. Empty by default: the step
+          is skipped. The workflow sets no
           event condition of its own: a caller that wants it on release tags only passes an
           expression that is empty on every other ref.
     secrets:
