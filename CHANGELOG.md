@@ -9,6 +9,28 @@ input/output rename or removal is a breaking change, additions are not.
 
 ### Added
 
+- **`verify-script` on `publish-nuget.yml`** — the path, relative to the repository root, of a
+  PowerShell script in the caller's repository that checks the packed packages before anything is
+  pushed. The `pack` job runs it after Pack and before Push to private feed, as
+  `pwsh -NoProfile -File <verify-script>` from the repository root, with `PACKAGES_DIR` (the absolute
+  path of `pack-output`) and `PACKAGE_VERSION` (the version the job computed and packed with) in its
+  environment. A non-zero exit fails the job, so neither push runs. No secret is passed to the
+  script, but what earlier steps left on the runner is readable to it — the private-feed PAT that
+  `setup-nuget-private-feed` writes to the user NuGet.Config, and the checkout's token.
+  The workflow adds no event condition: a caller that wants it on release tags only passes an
+  expression that is empty everywhere else.
+
+  Why: dale-sdk 0.12.0 reached nuget.org with a malformed `build/Vion.Dale.Sdk.targets`, because
+  Pack and both pushes are consecutive steps of this one job and a caller had nowhere to check the
+  packages in between (VION-210).
+  `proof-publish-nuget.yml` is new: it packs `tests/fixtures/nuget-pack/` through the workflow with
+  a script that asserts both values, checks the run's own jobs for the step's success, and asserts
+  over the workflow file that the step sits between Pack and both pushes and that its `run:` block
+  fails with the script's exit code.
+
+  Non-breaking: empty by default, and with it empty the step is skipped and Pack and both pushes
+  are unchanged.
+
 - **Folder mode on `actions/journal-lint`** — the journal can be a folder, `docs/process-journal/`,
   holding a `README.md` header and one fragment per branch named `YYYY-MM-DD-<branch>.md`. The
   folder must have `README.md` (not linted) and no subfolder; every other entry, hidden ones

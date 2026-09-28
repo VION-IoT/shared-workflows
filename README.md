@@ -17,7 +17,7 @@ For cross-repo context see
 
 | Workflow | Purpose |
 |----------|---------|
-| `publish-nuget.yml` | .NET build + pack + push to private feed and (on stable tag) nuget.org with API key. Optional `gate: true` runs the build/test/style gate before packing (one build) |
+| `publish-nuget.yml` | .NET build + pack + push to private feed and (on stable tag) nuget.org with API key. Optional `gate: true` runs the build/test/style gate before packing (one build); optional `verify-script` runs a caller's PowerShell script on the packed packages before either push, and a failing script pushes nothing. Proven by `proof-publish-nuget.yml` |
 | `dotnet-ci.yml` | .NET build + test + verify code style on PRs. Thin wrapper around the `dotnet-gate` composite (the shared gate) |
 | `deploy-aks.yml` | OIDC Azure login → AKS context → `kubectl set image` → rollout wait |
 | `close-external-prs.yml` | Auto-close PRs from forks (source-available repos) |

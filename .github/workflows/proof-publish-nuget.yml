@@ -1,0 +1,144 @@
+name: Proof — publish-nuget verify-script
+# In-repo proof for the `verify-script` input of the reusable workflow `publish-nuget.yml`, run
+# against the fixture under tests/fixtures/nuget-pack/. The input has two halves, and each job below
+# can fail on one of them:
+#   1. `publish` calls the workflow with the fixture's verify-packages.ps1, which asserts the
+#      PACKAGES_DIR and PACKAGE_VERSION it is handed — the pack-output path, resolved; the one
+#      .nupkg in it; and the version the job computed, in the file name and the nuspec;
+#   2. `verify-step-ran` reads this run's jobs and asserts the pack job's `Verify packages` step
+#      concluded success. Without it an ignored input would leave job 1 green, having run nothing;
+#   3. `gating` asserts, over publish-nuget.yml itself, that `Verify packages` sits after Pack and
+#      before both pushes, that nothing lets a push run past its failure, and that its own `run:`
+#      block fails with the caller's exit code. Inlined, not called: a reusable-workflow job cannot
+#      be asserted to fail — `continue-on-error` is not among the keys a `uses:` job accepts — and
+#      on a pull request both pushes skip anyway, so "stopped before the push" is not observable
+#      by calling the workflow.
+#
+# What it does not cover: a push. This repository holds no AZURE_DEVOPS_PAT (`gh secret list`,
+# empty, 2026-09-28), so job 1 passes a placeholder, and the fixture's nuget.config keeps its
+# restore off the feed that placeholder registers. For the same reason there is no
+# workflow_dispatch: outside a pull request, `Push to private feed` runs, and with the placeholder
+# it fails.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/publish-nuget.yml'
+      - '.github/workflows/proof-publish-nuget.yml'
+      - 'tests/fixtures/nuget-pack/**'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Pack the fixture with a verify-script
+    uses: ./.github/workflows/publish-nuget.yml
+    with:
+      solution: tests/fixtures/nuget-pack/PackFixture.slnx
+      # Not the default, so verify-packages.ps1 can tell PACKAGES_DIR follows the input.
+      pack-output: ./out/packages
+      push-to-nuget-org: false
+      verify-script: tests/fixtures/nuget-pack/verify-packages.ps1
+    secrets:
+      # Not a credential: see the header. The workflow requires the secret, and on a pull request
+      # its only reader that talks to the feed, `Push to private feed`, skips.
+      AZURE_DEVOPS_PAT: proof-only-not-a-credential
+
+  verify-step-ran:
+    name: Assert the verify step ran in the pack job
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: The pack job's Verify packages step concluded success
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # One page is enough: this workflow has four jobs. `filter=latest` lists each job's latest
+          # attempt, so a "re-run failed jobs" that re-runs only this one still finds the pack job.
+          $jobs = @((gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/jobs?filter=latest&per_page=100" |
+              ConvertFrom-Json).jobs)
+          # A called workflow's job is listed as "<caller job name> / <job id>".
+          $pack = @($jobs | Where-Object name -eq 'Pack the fixture with a verify-script / pack')
+          if ($pack.Count -ne 1) {
+              throw "Expected one pack job in this run, found: [$(($jobs | ForEach-Object name) -join '; ')]."
+          }
+          $step = @($pack[0].steps | Where-Object name -eq 'Verify packages')
+          if ($step.Count -ne 1) {
+              throw "The pack job has no 'Verify packages' step: [$(($pack[0].steps | ForEach-Object name) -join '; ')]."
+          }
+          if ($step[0].conclusion -ne 'success') {
+              throw "'Verify packages' concluded '$($step[0].conclusion)', expected 'success'. Skipped means verify-script was ignored."
+          }
+          Write-Host 'Confirmed: the caller-supplied verify-script ran in the pack job and passed.'
+
+  gating:
+    name: Assert a failing verify-script stops both pushes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # yq ships on ubuntu-latest. The assertions are on the workflow as written, because the
+      # behaviour they stand for — a failed step skips the later steps whose `if:` carries no status
+      # function — is Actions' own, and cannot be observed failing through a `uses:` job.
+      - name: Verify packages sits between Pack and both pushes, and nothing runs past it
+        shell: pwsh
+        run: |
+          $steps = @(yq -o=json '.jobs.pack.steps' .github/workflows/publish-nuget.yml | ConvertFrom-Json)
+          function IndexOf([string] $name) {
+              $matching = @(for ($i = 0; $i -lt $steps.Count; $i++) { if ($steps[$i].name -eq $name) { $i } })
+              if ($matching.Count -ne 1) { throw "Expected one step named '$name' in jobs.pack, found $($matching.Count)." }
+              $matching[0]
+          }
+          $pack = IndexOf 'Pack'
+          $verify = IndexOf 'Verify packages'
+          $pushes = @('Push to private feed', 'Push to nuget.org' | ForEach-Object { IndexOf $_ })
+          if (-not ($pack -lt $verify)) { throw "'Verify packages' (step $verify) does not follow 'Pack' (step $pack)." }
+          foreach ($push in $pushes) {
+              if (-not ($verify -lt $push)) { throw "'$($steps[$push].name)' (step $push) does not follow 'Verify packages' (step $verify)." }
+          }
+
+          $step = $steps[$verify]
+          if ($step.if -ne "inputs.verify-script != ''") {
+              throw "'Verify packages' runs on '$($step.if)', expected only on a set verify-script."
+          }
+          if ($null -ne $step.'continue-on-error') { throw "'Verify packages' sets continue-on-error, so its failure would not stop the pushes." }
+          if (($step | ConvertTo-Json -Depth 5) -match 'secrets\.') { throw "'Verify packages' is handed a secret." }
+
+          # Every step from the verify step to the last push: a status function in its `if:`
+          # (always, failure, cancelled, success) could run it after a failed verify.
+          for ($i = $verify + 1; $i -le ($pushes | Measure-Object -Maximum).Maximum; $i++) {
+              if ("$($steps[$i].if)" -match '\b(always|failure|cancelled|success)\s*\(') {
+                  throw "Step '$($steps[$i].name)' has if: '$($steps[$i].if)', which can run it after a failed verify."
+              }
+              if ($null -ne $steps[$i].'continue-on-error') { throw "Step '$($steps[$i].name)' sets continue-on-error." }
+          }
+          $step.run | Set-Content -LiteralPath "$env:RUNNER_TEMP/verify-step.ps1"
+          Write-Host "Confirmed: Pack (step $pack) < Verify packages (step $verify) < pushes (steps $($pushes -join ', '))."
+
+      # The step's own run block, extracted above, under the wrapper Actions puts around a pwsh
+      # step — so the exit code asserted is the one the job would end with. The passing script is
+      # the other side: without it, a block that failed on anything would pass the first case.
+      - name: The verify step's run block fails with the script's exit code, and only then
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path out/packages -Force | Out-Null
+          $env:PACKAGES_DIR = './out/packages'
+          $env:PACKAGE_VERSION = '0.0.0-ci.0'
+          'exit 0' | Set-Content -LiteralPath "$env:RUNNER_TEMP/verify-passes.ps1"
+          $cases = @(
+              @{ Script = 'tests/fixtures/nuget-pack/verify-fails.ps1'; Expected = 3 },
+              @{ Script = "$env:RUNNER_TEMP/verify-passes.ps1"; Expected = 0 }
+          )
+          foreach ($case in $cases) {
+              $env:VERIFY_SCRIPT = $case.Script
+              pwsh -NoProfile -Command "`$ErrorActionPreference = 'stop'; . '$env:RUNNER_TEMP/verify-step.ps1'; if ((Test-Path -LiteralPath variable:\LASTEXITCODE)) { exit `$LASTEXITCODE }"
+              if ($LASTEXITCODE -ne $case.Expected) {
+                  throw "With $($case.Script) the verify step exited $LASTEXITCODE, expected $($case.Expected)."
+              }
+              Write-Host "With $($case.Script): exit $LASTEXITCODE, as expected."
+          }
+          # Actions' pwsh wrapper ends this step with `exit $LASTEXITCODE`, which is 0 after the last case.

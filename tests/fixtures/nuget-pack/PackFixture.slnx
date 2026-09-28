@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Vion.Fixture.Packable/Vion.Fixture.Packable.csproj" />
+  </Folder>
+</Solution>
