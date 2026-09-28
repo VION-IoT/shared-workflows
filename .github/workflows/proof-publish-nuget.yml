@@ -57,13 +57,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # One page is enough: this workflow has four jobs.
-          $jobs = @((gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/attempts/$env:GITHUB_RUN_ATTEMPT/jobs?per_page=100" |
+          # One page is enough: this workflow has four jobs. `filter=latest` lists each job's latest
+          # attempt, so a "re-run failed jobs" that re-runs only this one still finds the pack job.
+          $jobs = @((gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/jobs?filter=latest&per_page=100" |
               ConvertFrom-Json).jobs)
           # A called workflow's job is listed as "<caller job name> / <job id>".
           $pack = @($jobs | Where-Object name -eq 'Pack the fixture with a verify-script / pack')
           if ($pack.Count -ne 1) {
-              throw "Expected one pack job in this run attempt, found: [$(($jobs | ForEach-Object name) -join '; ')]."
+              throw "Expected one pack job in this run, found: [$(($jobs | ForEach-Object name) -join '; ')]."
           }
           $step = @($pack[0].steps | Where-Object name -eq 'Verify packages')
           if ($step.Count -ne 1) {
