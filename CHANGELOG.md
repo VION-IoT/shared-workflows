@@ -7,6 +7,28 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+### Added
+
+- **`check-dependency-majors` and `dependency-majors-allow-list` on `dotnet-ci.yml`** — with
+  `check-dependency-majors: true` the workflow runs a second job, `dependency-majors`, beside
+  `build-test-style` on the same `runs-on`. It reads every committed `packages.lock.json` and fails
+  when a package or project resolves a dependency at a higher major than it declares (below 1.0, a
+  higher minor), naming the edge, its lock files and the allow-list entry that would excuse it.
+  `dependency-majors-allow-list` is the path, relative to the repository root, of a JSON array of
+  `{ package, dependency, declared, resolved, reason }`; empty means no exceptions, and an entry that
+  matches no edge fails. The job reads lock files only — no SDK, no restore — and needs `pwsh` and
+  `git` on the runner. Both inputs default off: a caller that sets neither sees the job skipped.
+  The check runs in the new composite `actions/dependency-majors` (inputs `root`, `allow-list`;
+  output `findings`), moved from mesh's `scripts/check-dependency-majors.ps1` with the repository
+  root and the allow-list made parameters.
+
+  Why: NuGet resolves a dependency to the lowest version every request allows and reports nothing
+  when that lifts a package onto a major it was not built against; mesh caught this in its own CI,
+  and the other `dotnet-ci.yml` callers get it by one input
+  (`specs/in-flight/2026-10-08-nuget-lock-determinism.md`). `proof-dependency-majors.yml` is new:
+  it runs the action over `tests/fixtures/dependency-majors/` and asserts the findings of a raised
+  major and of a stale allow-list entry, and that declared majors and an excused edge pass.
+
 ## v1.15.0 — 2026-09-28
 
 ### Added

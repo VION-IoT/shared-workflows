@@ -16,6 +16,15 @@ name: .NET CI
 #     `.sln.DotSettings` cleanup profile (see the `dale` repo for a reference setup)
 #   - holding AZURE_DEVOPS_PAT and passing `secrets: inherit` when `private-feed: true`
 #   - granting `contents: read`
+#
+# Opt-in dependency-majors check: `check-dependency-majors: true` adds a second job,
+# `dependency-majors`, beside `build-test-style` on the same runner, so a failing build, test or
+# style gate does not hide its result. It runs the `actions/dependency-majors` composite over every
+# committed `packages.lock.json` and fails when a package or project resolves a dependency at a
+# higher major than it declares. It reads the lock files only — no SDK, no restore — and needs
+# `pwsh` and `git` on the runner. `dependency-majors-allow-list` names a JSON array of
+# `{ package, dependency, declared, resolved, reason }` excusing reviewed edges; an entry that
+# matches no edge fails too. With the check off the job is skipped and nothing runs.
 
 on:
   workflow_call:
@@ -51,6 +60,20 @@ on:
           Runner for the build/test/style job. A single label string (e.g. 'ubuntu-latest', or a
           self-hosted label), or a JSON array of labels (e.g. '["self-hosted","linux"]') for
           multi-label self-hosted targeting. Defaults to 'ubuntu-latest' — unchanged for existing callers.
+      check-dependency-majors:
+        required: false
+        type: boolean
+        default: false
+        description: >-
+          Run the `dependency-majors` job, which fails when a package or project in a committed
+          packages.lock.json resolves a dependency at a higher major than it declares
+      dependency-majors-allow-list:
+        required: false
+        type: string
+        default: ''
+        description: >-
+          Path, relative to the repo root, of a JSON array of { package, dependency, declared,
+          resolved, reason } excusing reviewed edges; empty means no exceptions
     secrets:
       AZURE_DEVOPS_PAT:
         required: false
@@ -95,3 +118,16 @@ jobs:
           solution: ${{ inputs.solution }}
           run-tests: ${{ inputs.run-tests }}
           test-filter: ${{ inputs.test-filter }}
+
+  # Runs beside build-test-style rather than after it, so a failing gate does not hide a drift result.
+  dependency-majors:
+    if: ${{ inputs.check-dependency-majors }}
+    runs-on: ${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: VION-IoT/shared-workflows/actions/dependency-majors@v1
+        with:
+          allow-list: ${{ inputs.dependency-majors-allow-list }}
