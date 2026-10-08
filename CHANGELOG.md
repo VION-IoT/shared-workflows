@@ -7,6 +7,8 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+## v1.16.0 — 2026-10-08
+
 ### Added
 
 - **`check-dependency-majors` and `dependency-majors-allow-list` on `dotnet-ci.yml`** — with
