@@ -1,6 +1,6 @@
 ---
 slug: dependency-majors
-status: in-flight
+status: archived
 areas: [dotnet-ci, actions]
 author: Justin Thiede
 created: 2026-10-08
