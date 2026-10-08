@@ -1,0 +1,54 @@
+name: Dependency majors
+description: |
+  Fails when a package or project in a committed `packages.lock.json` resolves a dependency at a
+  higher major version than it declares. NuGet resolves each dependency to the lowest version every
+  request in the graph allows, so a package that declares major 1 of a dependency silently gets
+  major 2 when another request asks for it, and a break only shows at run time. Below 1.0 the minor
+  counts as the major.
+
+  Reads every lock file `git ls-files` lists under `root`; it never restores, so it needs no SDK. An
+  edge reviewed and found compatible goes in the `allow-list` JSON file, an array of
+  `{ package, dependency, declared, resolved, reason }`; an entry that matches no edge fails too, so
+  the list holds only exceptions that still apply. A dependency with no resolved version fails, and
+  so does a root with no committed lock file, since the run would otherwise check nothing.
+
+  Internal to `dotnet-ci.yml`, which runs it as its `dependency-majors` job when a caller sets
+  `check-dependency-majors: true`. The caller runs `actions/checkout` first; the runner needs
+  PowerShell 7 (`pwsh`) and `git`. The same script runs locally:
+  `pwsh -NoProfile -File actions/dependency-majors/check-dependency-majors.ps1 -RepoRoot <repo> -AllowList <file>`.
+
+inputs:
+  root:
+    description: Directory whose committed lock files are read, relative to the workspace; empty means the workspace
+    required: false
+    default: ''
+  allow-list:
+    description: Path of the JSON allow-list, relative to the workspace; empty means no exceptions
+    required: false
+    default: ''
+
+outputs:
+  findings:
+    description: "The findings, one per line without the `::error::` prefix; empty when every edge resolves its declared major or an allowed one"
+    value: ${{ steps.check.outputs.findings }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check dependency majors
+      id: check
+      shell: pwsh
+      env:
+        ROOT: ${{ inputs.root }}
+        ALLOW_LIST: ${{ inputs.allow-list }}
+      run: |
+        # The script writes with Write-Host, which goes to the information stream; 6>&1 collects it.
+        $lines = @(& (Join-Path $env:GITHUB_ACTION_PATH 'check-dependency-majors.ps1') -RepoRoot $env:ROOT -AllowList $env:ALLOW_LIST 6>&1 | ForEach-Object { "$_" })
+        $code = $LASTEXITCODE
+        $lines | Write-Output
+        $findings = @($lines | Where-Object { $_.StartsWith('::error::') } | ForEach-Object { $_.Substring('::error::'.Length) })
+        $delimiter = "FINDINGS_$([guid]::NewGuid().ToString('N'))"
+        "findings<<$delimiter" | Out-File $env:GITHUB_OUTPUT -Append
+        $findings              | Out-File $env:GITHUB_OUTPUT -Append
+        $delimiter             | Out-File $env:GITHUB_OUTPUT -Append
+        exit $code

@@ -1,0 +1,9 @@
+[
+  {
+    "package": "Vion.Fixture.Client",
+    "dependency": "Vion.Fixture.Contracts",
+    "declared": "1",
+    "resolved": "2",
+    "reason": "Fixture: Vion.Fixture.Client uses only the part of Vion.Fixture.Contracts that 2.0 kept."
+  }
+]
