@@ -6,8 +6,11 @@ name: Proof — dependency majors
 # Each case points `root` at its own fixture directory, since the action reads every lock file git
 # lists under `root` and the repository holds other fixtures' lock files.
 #
-# `declared/` resolves every edge at its declared major — through a casing difference, a 0.x minor, a
-# project reference and a runtime section laid over its framework section — and must pass.
+# `declared/` resolves every edge at its declared major and must pass. It holds the paths a pass can
+# hide: a dependency spelled in other casing, a 0.x minor, a project depending on a project (which has
+# no resolved version and must be skipped), a runtime-section package resolved through its framework
+# section, and one resolved through a runtime entry whose major differs from the framework entry's
+# (which passes only when the runtime section wins).
 # `raised/` resolves one edge a major higher than declared and must fail; with `raised-allowed.json`
 # excusing that edge it must pass. The same allow-list over `declared/` holds an entry matching no
 # edge and must fail. The assertion that matters is on the findings, not only the outcome: a check
@@ -52,7 +55,7 @@ jobs:
         run: |
           $failed = $false
           foreach ($case in @(@{ Name = 'declared/'; Findings = $env:DECLARED_FINDINGS }, @{ Name = 'raised/ allowed'; Findings = $env:ALLOWED_FINDINGS })) {
-              if ($case.Findings.Trim()) {
+              if (-not [string]::IsNullOrWhiteSpace($case.Findings)) {
                   Write-Host "::error::$($case.Name): expected no findings, got: $($case.Findings)"
                   $failed = $true
               }
