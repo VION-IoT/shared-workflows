@@ -1,0 +1,119 @@
+name: Proof — dependency majors
+# In-repo proof for the composite action `actions/dependency-majors`, run against the fixtures under
+# `tests/fixtures/dependency-majors/`. `dotnet-ci.yml` loads the action at `@v1`, so a proof through
+# that workflow would run the released action, not this branch's; this one calls `./actions/...`.
+#
+# Each case points `root` at its own fixture directory, since the action reads every lock file git
+# lists under `root` and the repository holds other fixtures' lock files.
+#
+# `declared/` resolves every edge at its declared major and must pass. It holds the paths a pass can
+# hide: a dependency spelled in other casing, a 0.x minor, a project depending on a project (which has
+# no resolved version and must be skipped), a runtime-section package resolved through its framework
+# section, and one resolved through a runtime entry whose major differs from the framework entry's
+# (which passes only when the runtime section wins).
+# `raised/` resolves one edge a major higher than declared and must fail; with `raised-allowed.json`
+# excusing that edge it must pass. The same allow-list over `declared/` holds an entry matching no
+# edge and must fail. The assertion that matters is on the findings, not only the outcome: a check
+# that fails for the wrong reason, or names a different edge, says nothing.
+
+on:
+  pull_request:
+    paths:
+      - 'actions/dependency-majors/**'
+      - 'tests/fixtures/dependency-majors/**'
+      - '.github/workflows/proof-dependency-majors.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pass:
+    name: Declared majors, and an allowed raised one, pass
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check declared/ with no allow-list
+        id: declared
+        uses: ./actions/dependency-majors
+        with:
+          root: tests/fixtures/dependency-majors/declared
+
+      - name: Check raised/ with an allow-list entry for its edge
+        id: allowed
+        uses: ./actions/dependency-majors
+        with:
+          root: tests/fixtures/dependency-majors/raised
+          allow-list: tests/fixtures/dependency-majors/raised-allowed.json
+
+      - name: Assert neither reported a finding
+        shell: pwsh
+        env:
+          DECLARED_FINDINGS: ${{ steps.declared.outputs.findings }}
+          ALLOWED_FINDINGS: ${{ steps.allowed.outputs.findings }}
+        run: |
+          $failed = $false
+          foreach ($case in @(@{ Name = 'declared/'; Findings = $env:DECLARED_FINDINGS }, @{ Name = 'raised/ allowed'; Findings = $env:ALLOWED_FINDINGS })) {
+              if (-not [string]::IsNullOrWhiteSpace($case.Findings)) {
+                  Write-Host "::error::$($case.Name): expected no findings, got: $($case.Findings)"
+                  $failed = $true
+              }
+          }
+          if ($failed) { exit 1 }
+          Write-Host 'Both passed with no findings.'
+
+  fail:
+    name: A raised major, and a stale allow-list entry, fail naming the edge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check raised/ with no allow-list
+        id: raised
+        continue-on-error: true
+        uses: ./actions/dependency-majors
+        with:
+          root: tests/fixtures/dependency-majors/raised
+
+      - name: Check declared/ with an allow-list entry that matches no edge
+        id: stale
+        continue-on-error: true
+        uses: ./actions/dependency-majors
+        with:
+          root: tests/fixtures/dependency-majors/declared
+          allow-list: tests/fixtures/dependency-majors/raised-allowed.json
+
+      - name: Assert each failed with exactly the expected finding
+        shell: pwsh
+        env:
+          RAISED_OUTCOME: ${{ steps.raised.outcome }}
+          RAISED_FINDINGS: ${{ steps.raised.outputs.findings }}
+          STALE_OUTCOME: ${{ steps.stale.outcome }}
+          STALE_FINDINGS: ${{ steps.stale.outputs.findings }}
+        run: |
+          # Each case's one expected finding, as the text it starts with.
+          $cases = @(
+              @{ Name = 'raised/'; Outcome = $env:RAISED_OUTCOME; Findings = $env:RAISED_FINDINGS
+                 Expected = 'Vion.Fixture.Client declares Vion.Fixture.Contracts at major 1 but resolves major 2 (packages.lock.json).' }
+              @{ Name = 'a stale entry'; Outcome = $env:STALE_OUTCOME; Findings = $env:STALE_FINDINGS
+                 Expected = 'Vion.Fixture.Client -> Vion.Fixture.Contracts (1 to 2) in tests/fixtures/dependency-majors/raised-allowed.json matches no edge any more' }
+          )
+
+          $failed = $false
+          foreach ($case in $cases) {
+              Write-Host "== $($case.Name): outcome '$($case.Outcome)'"
+              Write-Host $case.Findings
+              if ($case.Outcome -ne 'failure') {
+                  Write-Host "::error::$($case.Name): expected the check to fail, got '$($case.Outcome)'"
+                  $failed = $true
+                  continue
+              }
+              $found = @($case.Findings -split "`n" | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ -ne '' })
+              if ($found.Count -ne 1 -or -not $found[0].StartsWith($case.Expected, [System.StringComparison]::Ordinal)) {
+                  Write-Host "::error::$($case.Name): expected exactly one finding starting '$($case.Expected)', got $($found.Count): $($found -join ' | ')"
+                  $failed = $true
+              }
+          }
+          if ($failed) { exit 1 }
+          Write-Host 'Both failed, each with exactly its expected finding.'

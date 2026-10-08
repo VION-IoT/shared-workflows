@@ -18,7 +18,7 @@ For cross-repo context see
 | Workflow | Purpose |
 |----------|---------|
 | `publish-nuget.yml` | .NET build + pack + push to private feed and (on stable tag) nuget.org with API key. Optional `gate: true` runs the build/test/style gate before packing (one build); optional `verify-script` runs a caller's PowerShell script on the packed packages before either push, and a failing script pushes nothing. Proven by `proof-publish-nuget.yml` |
-| `dotnet-ci.yml` | .NET build + test + verify code style on PRs. Thin wrapper around the `dotnet-gate` composite (the shared gate) |
+| `dotnet-ci.yml` | .NET build + test + verify code style on PRs. Thin wrapper around the `dotnet-gate` composite (the shared gate). Optional `check-dependency-majors: true` adds a `dependency-majors` job beside the gate that fails when a committed `packages.lock.json` resolves a dependency at a higher major than a package or project declares; `dependency-majors-allow-list` names the caller's JSON allow-list of reviewed edges, relative to the repo root |
 | `deploy-aks.yml` | OIDC Azure login → AKS context → `kubectl set image` → rollout wait |
 | `close-external-prs.yml` | Auto-close PRs from forks (source-available repos) |
 
@@ -50,6 +50,7 @@ are the regression tests for these workflows; read them before changing an input
 | `docker-tags` | Wrap `docker/metadata-action` with the VION tag scheme |
 | `azure-aks-set-image` | OIDC Azure login + AKS context + `kubectl set image` + rollout wait |
 | `journal-lint` | Check the live window of `docs/process-journal.md`, or every fragment in a `docs/process-journal/` folder, against the one VION journal grammar (entry shape, the five `where` values, date order, `max-chars`; for a folder also `README.md`, fragment names and each entry against its file name's date); reports, never rewrites. Needs `pwsh`. Proven by `proof-journal-lint.yml` |
+| `dependency-majors` | Fail when a package or project in a committed `packages.lock.json` under `root` resolves a dependency at a higher major than it declares (below 1.0, a higher minor), unless an entry in the `allow-list` JSON excuses that edge; an entry matching no edge fails too. Reads lock files only, no restore. Needs `pwsh` and `git`. Internal to `dotnet-ci.yml`'s `check-dependency-majors` input, which is how callers use it. Proven by `proof-dependency-majors.yml` |
 
 `journal-lint` is for the repos that keep a process journal: `architecture`, `cloud-api`, `dale`,
 `dale-sdk`, `dashboard`, `documentation`, `website` and `logic-block-libraries`. Each adds the step

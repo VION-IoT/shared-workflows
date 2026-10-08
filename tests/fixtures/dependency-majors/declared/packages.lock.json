@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "Vion.Fixture.Client": {
+        "type": "Direct",
+        "requested": "[3.1.0, )",
+        "resolved": "3.1.0",
+        "contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        "dependencies": {
+          "vion.fixture.contracts": "1.4.0",
+          "Vion.Fixture.Preview": "0.3.0"
+        }
+      },
+      "Vion.Fixture.Contracts": {
+        "type": "Transitive",
+        "resolved": "1.6.0",
+        "contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      },
+      "Vion.Fixture.Native": {
+        "type": "Transitive",
+        "resolved": "2.2.0",
+        "contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      },
+      "Vion.Fixture.Preview": {
+        "type": "Transitive",
+        "resolved": "0.3.2",
+        "contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      },
+      "vion.fixture.core": {
+        "type": "Project"
+      },
+      "vion.fixture.shared": {
+        "type": "Project",
+        "dependencies": {
+          "Vion.Fixture.Contracts": "[1.6.0, )",
+          "Vion.Fixture.Core": "[1.0.0, )",
+          "Vion.Fixture.Native": "[2.0.0, )"
+        }
+      }
+    },
+    "net10.0/linux-musl-x64": {
+      "Vion.Fixture.Interop": {
+        "type": "Transitive",
+        "resolved": "1.0.0",
+        "contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        "dependencies": {
+          "Vion.Fixture.Native": "3.0.0"
+        }
+      },
+      "Vion.Fixture.Native": {
+        "type": "Transitive",
+        "resolved": "3.0.0",
+        "contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        "dependencies": {
+          "Vion.Fixture.Contracts": "1.0.0"
+        }
+      }
+    }
+  }
+}
