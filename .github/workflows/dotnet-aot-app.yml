@@ -1,0 +1,636 @@
+name: .NET NativeAOT app
+# Reusable workflow: the whole pipeline of a VION NativeAOT app that ships as a multi-arch container
+# image and, optionally, a win-x64 release zip. It reads the SDK from global.json, builds and tests
+# through `actions/dotnet-gate`, decides whether a pull request publishes, computes the app version,
+# publishes NativeAOT for linux-musl-x64 and linux-musl-arm64 in the pinned Alpine SDK image and for
+# win-x64 through `dotnet-win-x64.yml`, attaches the win-x64 zip to a `v*` release, pushes the image
+# to `vionimages.azurecr.io/<image>` (every non-PR run) and `vioniot/<image>` (releases only), and
+# deletes its artifacts. mesh, thingsboard-service-provider, hal-raspberry and hal-waveshare-ipcbox
+# each carried a copy of this (specs/in-flight/2026-10-09-dotnet-aot-app.md).
+#
+# Caller is responsible for:
+#   - calling it from a job named `ci-cd`, so the checks read `ci-cd / <job>`, with `secrets: inherit`
+#     (VIONIMAGES_ACR_USERNAME, VIONIMAGES_ACR_PASSWORD, DOCKERHUB_USERNAME, DOCKERHUB_PAT)
+#   - a `Dockerfile` in `docker-context` that copies `publish/${TARGETARCH}/`: the Linux publishes are
+#     staged into `<docker-context>/publish/amd64` and `<docker-context>/publish/arm64`
+#   - a `global.json` pinning `sdk.version`: every restore is locked, and the lock files record the
+#     SDK-injected ILCompiler at the version that SDK bundles
+#   - granting `contents: write` on the calling job with `win-x64: true`, for `release-win-x64`;
+#     `contents: read` otherwise
+#   - keeping `ready_for_review` in its `pull_request` types if it opens drafts: a draft runs only
+#     `sdk-version`, `build-test-style` and `dependency-majors`, and marking it ready starts the rest
+#   - unless `run-style` is false, `scripts/cleanup-code.ps1`, `.config/dotnet-tools.json` and a
+#     `.sln.DotSettings` cleanup profile, as for `dotnet-ci.yml`
+#
+# Permissions: every job declares `contents: read` except `release-win-x64`, which declares none and
+# inherits the caller's grant; there is no workflow-level `permissions:`. The Linux publishes mount
+# the checkout into a root container that runs the pull request's MSBuild, so a caller's write grant
+# must not reach them.
+#
+# Runners: each job's self-hosted label set is written once, in its `runs-on`.
+# `github-hosted-runners: true` moves every job to GitHub's runners; only the proof sets it, together
+# with `global-json` and `run-style`.
+#
+# Skipped is not failed: a skipped job skips its dependants by default, so the downstream `if:`s use
+# `!cancelled()` and the results of the jobs they need. `cleanup` keeps `always()`, so a cancelled
+# run still deletes its artifacts.
+
+on:
+  workflow_call:
+    inputs:
+      solution:
+        required: true
+        type: string
+        description: Path to the .sln/.slnx to build and test (relative to repo root)
+      publish-project:
+        required: true
+        type: string
+        description: >-
+          Path to the .csproj to publish (relative to repo root). Its file name without `.csproj` is
+          the executable the Linux publish summaries inspect
+      image:
+        required: true
+        type: string
+        description: >-
+          Image name: pushes `vionimages.azurecr.io/<image>` and `vioniot/<image>`; artifacts
+          `<image>_amd64`, `<image>_arm64`, `<image>_win-x64`; release zip
+          `<image>-<app-version>-win-x64.zip`
+      docker-context:
+        required: false
+        type: string
+        default: '.'
+        description: >-
+          Directory holding the Dockerfile. The Linux publishes are staged into
+          `<docker-context>/publish/amd64` and `<docker-context>/publish/arm64`
+      run-tests:
+        required: false
+        type: boolean
+        default: true
+        description: Run `dotnet test` in build-test-style; also gates test-win-x64
+      linux-x64:
+        required: false
+        type: boolean
+        default: false
+        description: Publish NativeAOT for linux-musl-x64 and put linux/amd64 in the image
+      linux-arm64:
+        required: false
+        type: boolean
+        default: false
+        description: Publish NativeAOT for linux-musl-arm64 and put linux/arm64 in the image
+      win-x64:
+        required: false
+        type: boolean
+        default: false
+        description: >-
+          Test on Windows, publish win-x64 and attach the zip to a `v*` release. Needs the calling
+          job to grant `contents: write`
+      publish-only-on-build-changes:
+        required: false
+        type: boolean
+        default: true
+        description: >-
+          On a pull request, publish only when it changes global.json, a .csproj,
+          Directory.Build.props, a packages.lock.json, linker.xml or the caller's own workflow file
+      keep-pr-artifacts:
+        required: false
+        type: boolean
+        default: false
+        description: >-
+          On a pull request, skip cleanup and leave the publishes to their 1-day expiry, for a
+          caller whose pull-request binaries are tried on hardware
+      check-dependency-majors:
+        required: false
+        type: boolean
+        default: false
+        description: >-
+          Run the `dependency-majors` job, which fails when a package or project in a committed
+          packages.lock.json resolves a dependency at a higher major than it declares
+      dependency-majors-allow-list:
+        required: false
+        type: string
+        default: ''
+        description: >-
+          Path, relative to the repo root, of a JSON array of { package, dependency, declared,
+          resolved, reason } excusing reviewed edges; empty means no exceptions
+      github-hosted-runners:
+        required: false
+        type: boolean
+        default: false
+        description: Run every job on GitHub's runners instead of VION's. Set only by the proof
+      global-json:
+        required: false
+        type: string
+        default: 'global.json'
+        description: Path of the global.json sdk-version reads. Set only by the proof
+      run-style:
+        required: false
+        type: boolean
+        default: true
+        description: Run the style verify in build-test-style. Set only by the proof
+    outputs:
+      workflow-file:
+        description: >-
+          The caller's workflow file, cut from `github.workflow_ref`; the file the pull-request
+          publish filter watches. Empty on a draft
+        value: ${{ jobs.decide-publish.outputs.workflow-file }}
+    secrets:
+      VIONIMAGES_ACR_USERNAME:
+        required: false
+        description: vionimages ACR user; read by push-linux-image
+      VIONIMAGES_ACR_PASSWORD:
+        required: false
+        description: vionimages ACR password; read by push-linux-image
+      DOCKERHUB_USERNAME:
+        required: false
+        description: Docker Hub user; read by push-linux-image on a `v*` tag
+      DOCKERHUB_PAT:
+        required: false
+        description: Docker Hub access token; read by push-linux-image on a `v*` tag
+
+jobs:
+  # A locked restore fails with NU1004 on any SDK but the one the lock files were written with, so
+  # every job that restores takes its version from here.
+  sdk-version:
+    runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-latest' || fromJSON('["self-hosted","Linux"]') }}
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fails rather than carrying on with an empty version, which would reach `setup-dotnet` and the
+      # image tag `sdk:-alpine3.23`.
+      - id: read
+        shell: bash
+        env:
+          GLOBAL_JSON: ${{ inputs.global-json }}
+        run: |
+          version=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$GLOBAL_JSON")
+          if [ -z "$version" ]; then
+            echo "::error::No sdk.version could be read from '$GLOBAL_JSON'."
+            exit 1
+          fi
+          echo "SDK $version, from $GLOBAL_JSON"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build-test-style:
+    needs: [sdk-version]
+    runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64","pwsh"]') }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        # Install .NET into a writable, runner-local dir. Self-hosted runners frequently can't write the
+        # system default (/usr/share/dotnet), which makes setup-dotnet fail before the build starts;
+        # runner.temp is always writable. Set at step level: the runner context is not available in
+        # job-level env.
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ needs.sdk-version.outputs.version }}
+
+      # setup-dotnet only adds a custom DOTNET_INSTALL_DIR to PATH on a FRESH install. A self-hosted
+      # runner that doesn't wipe runner.temp between jobs finds a cached SDK, skips the install — and
+      # skips the PATH add — so dotnet drops off PATH for later steps. Add it explicitly so the gate is
+      # deterministic.
+      - name: Put dotnet on PATH
+        shell: bash
+        run: echo "${{ runner.temp }}/dotnet" >> "$GITHUB_PATH"
+
+      # The same composite dotnet-ci.yml runs, in Debug as there.
+      - uses: VION-IoT/shared-workflows/actions/dotnet-gate@v1
+        with:
+          solution: ${{ inputs.solution }}
+          run-tests: ${{ inputs.run-tests }}
+          run-style: ${{ inputs.run-style }}
+
+  # Runs beside build-test-style rather than after it, so a failing gate does not hide a drift result.
+  dependency-majors:
+    if: ${{ inputs.check-dependency-majors }}
+    runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64","pwsh"]') }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: VION-IoT/shared-workflows/actions/dependency-majors@v1
+        with:
+          allow-list: ${{ inputs.dependency-majors-allow-list }}
+
+  # A pull request that changes the build configuration also publishes, since a publish can break
+  # where a build and its tests pass. A `paths:` filter applies to a whole workflow, and this one also
+  # runs the tests, so the changed files are checked here instead. The caller's own workflow file is
+  # among them; inside a called workflow `github.workflow_ref` names the caller's top-level file, as
+  # `<owner>/<repo>/<path>@<ref>`. A draft skips this job, and with it everything that publishes.
+  decide-publish:
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
+    runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-latest' || fromJSON('["self-hosted","Linux"]') }}
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+      workflow-file: ${{ steps.workflow-file.outputs.path }}
+    steps:
+      - id: workflow-file
+        shell: bash
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          path="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"
+          path="${path%%@*}"
+          case "$path" in
+            .github/workflows/*) ;;
+            *) echo "::error::Cannot cut a workflow file out of github.workflow_ref '$WORKFLOW_REF'."; exit 1 ;;
+          esac
+          echo "Caller's workflow file: $path"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
+      - if: ${{ github.event_name == 'pull_request' && inputs.publish-only-on-build-changes }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: decide
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          FILTER: ${{ inputs.publish-only-on-build-changes }}
+          WORKFLOW_FILE: ${{ steps.workflow-file.outputs.path }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] || [ "$FILTER" != true ]; then
+            publish=true
+          else
+            # Captured first, so that a failing diff fails the job instead of skipping the publishes.
+            files=$(git diff --name-only "origin/$BASE_REF...HEAD")
+            if printf '%s\n' "$files" | grep -E '(global\.json|\.csproj|Directory\.Build\.props|packages\.lock\.json|linker\.xml)$' >/dev/null \
+              || printf '%s\n' "$files" | grep -Fx "$WORKFLOW_FILE" >/dev/null; then
+              publish=true
+            else
+              publish=false
+            fi
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+  app-version:
+    needs: [decide-publish]
+    if: ${{ needs.decide-publish.outputs.publish == 'true' }}
+    runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-latest' || fromJSON('["self-hosted","Linux"]') }}
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        uses: VION-IoT/shared-workflows/actions/compute-version@v1
+
+  # A run on Windows catches platform-dependent behaviour a Linux-only run cannot see. Not gated by
+  # decide-publish: it tests, it publishes nothing. A draft skips it to save the hosted minutes of
+  # every push, and the run once the pull request is ready covers the state that gets merged.
+  test-win-x64:
+    needs: [sdk-version]
+    if: ${{ inputs.win-x64 && inputs.run-tests && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # Only the global.json SDK is on PATH: runner.temp holds nothing else, and the caller's
+      # global.json may not sit at the repository root.
+      - uses: actions/setup-dotnet@v6
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: ${{ needs.sdk-version.outputs.version }}
+
+      - name: Put dotnet on PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value '${{ runner.temp }}/dotnet'
+
+      - name: Test
+        shell: pwsh
+        env:
+          SOLUTION: ${{ inputs.solution }}
+        run: |
+          dotnet test $env:SOLUTION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # Uses docker run, not a job-level container:, so checkout and upload run on the host (host-owned).
+  # A job container runs EVERY step as root and salts a self-hosted runner's shared _work with
+  # root-owned bin/obj, which breaks the next job's checkout. Here only the build is root, for
+  # `apk add`; the trap chowns the workspace back on exit.
+  publish-linux-x64:
+    needs: [sdk-version, build-test-style, dependency-majors, decide-publish, app-version]
+    if: >-
+      ${{ !cancelled() && inputs.linux-x64
+      && needs.decide-publish.outputs.publish == 'true'
+      && needs.app-version.result == 'success'
+      && needs.build-test-style.result == 'success'
+      && (needs.dependency-majors.result == 'success' || needs.dependency-majors.result == 'skipped') }}
+    runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64"]') }}
+    permissions:
+      contents: read
+    env:
+      RUNTIME_IDENTIFIER: linux-musl-x64
+      PUBLISH_OUTPUT: ${{ inputs.docker-context }}/publish/amd64
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Publish ${{ env.RUNTIME_IDENTIFIER }} (AOT) in Alpine container
+        shell: bash
+        env:
+          SDK_VERSION: ${{ needs.sdk-version.outputs.version }}
+          VERSION: ${{ needs.app-version.outputs.version }}
+          PUBLISH_PROJECT: ${{ inputs.publish-project }}
+        run: |
+          mkdir -p "$PUBLISH_OUTPUT"
+
+          docker run --rm \
+            -e HOME=/tmp/home \
+            -e VERSION \
+            -e PUBLISH_PROJECT \
+            -e RUNTIME_IDENTIFIER \
+            -e PUBLISH_OUTPUT \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$PWD:/src" \
+            -w /src \
+            "mcr.microsoft.com/dotnet/sdk:$SDK_VERSION-alpine3.23" \
+            sh -eux -c '
+              trap "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" EXIT
+
+              apk add --no-cache build-base llvm lld zlib-dev
+
+              mkdir -p "$HOME"
+
+              dotnet publish "$PUBLISH_PROJECT" \
+                -c Release \
+                -r "$RUNTIME_IDENTIFIER" \
+                -o "/src/$PUBLISH_OUTPUT" \
+                -p:Version="$VERSION"
+            '
+
+      - name: Summarise the publish
+        shell: bash
+        env:
+          PUBLISH_PROJECT: ${{ inputs.publish-project }}
+        run: |
+          count=$(find "$PUBLISH_OUTPUT" -type f | wc -l)
+          [ "$count" -gt 0 ] || { echo "Publish produced no files in $PUBLISH_OUTPUT." >&2; exit 1; }
+          executable="$PUBLISH_OUTPUT/$(basename "$PUBLISH_PROJECT" .csproj)"
+          [ -f "$executable" ] || { echo "Publish produced no executable $executable." >&2; exit 1; }
+          megabytes=$(find "$PUBLISH_OUTPUT" -type f -printf '%s\n' | awk '{ s += $1 } END { printf "%.1f", s / 1048576 }')
+          described=$(file "$executable")
+          echo "$described"
+          {
+            echo "### $RUNTIME_IDENTIFIER publish"
+            echo
+            echo "- runtime identifier: \`$RUNTIME_IDENTIFIER\`"
+            echo "- files: $count ($megabytes MB)"
+            echo "- \`$described\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.image }}_amd64
+          path: ${{ env.PUBLISH_OUTPUT }}
+          if-no-files-found: error
+          retention-days: 1 # Fallback only - cleanup deletes it, unless keep-pr-artifacts on a PR
+
+  # The x64 job with the arm64 target. docker run, not a job-level container:, also because GitHub's
+  # JS actions can't run in an arm64 Alpine container (musl Node is x64-only).
+  publish-linux-arm64:
+    needs: [sdk-version, build-test-style, dependency-majors, decide-publish, app-version]
+    if: >-
+      ${{ !cancelled() && inputs.linux-arm64
+      && needs.decide-publish.outputs.publish == 'true'
+      && needs.app-version.result == 'success'
+      && needs.build-test-style.result == 'success'
+      && (needs.dependency-majors.result == 'success' || needs.dependency-majors.result == 'skipped') }}
+    runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-24.04-arm' || fromJSON('["self-hosted","Linux","ARM64"]') }}
+    permissions:
+      contents: read
+    env:
+      RUNTIME_IDENTIFIER: linux-musl-arm64
+      PUBLISH_OUTPUT: ${{ inputs.docker-context }}/publish/arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Publish ${{ env.RUNTIME_IDENTIFIER }} (AOT) in Alpine container
+        shell: bash
+        env:
+          SDK_VERSION: ${{ needs.sdk-version.outputs.version }}
+          VERSION: ${{ needs.app-version.outputs.version }}
+          PUBLISH_PROJECT: ${{ inputs.publish-project }}
+        run: |
+          mkdir -p "$PUBLISH_OUTPUT"
+
+          docker run --rm \
+            -e HOME=/tmp/home \
+            -e VERSION \
+            -e PUBLISH_PROJECT \
+            -e RUNTIME_IDENTIFIER \
+            -e PUBLISH_OUTPUT \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$PWD:/src" \
+            -w /src \
+            "mcr.microsoft.com/dotnet/sdk:$SDK_VERSION-alpine3.23" \
+            sh -eux -c '
+              trap "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" EXIT
+
+              apk add --no-cache build-base llvm lld zlib-dev
+
+              mkdir -p "$HOME"
+
+              dotnet publish "$PUBLISH_PROJECT" \
+                -c Release \
+                -r "$RUNTIME_IDENTIFIER" \
+                -o "/src/$PUBLISH_OUTPUT" \
+                -p:Version="$VERSION"
+            '
+
+      - name: Summarise the publish
+        shell: bash
+        env:
+          PUBLISH_PROJECT: ${{ inputs.publish-project }}
+        run: |
+          count=$(find "$PUBLISH_OUTPUT" -type f | wc -l)
+          [ "$count" -gt 0 ] || { echo "Publish produced no files in $PUBLISH_OUTPUT." >&2; exit 1; }
+          executable="$PUBLISH_OUTPUT/$(basename "$PUBLISH_PROJECT" .csproj)"
+          [ -f "$executable" ] || { echo "Publish produced no executable $executable." >&2; exit 1; }
+          megabytes=$(find "$PUBLISH_OUTPUT" -type f -printf '%s\n' | awk '{ s += $1 } END { printf "%.1f", s / 1048576 }')
+          described=$(file "$executable")
+          echo "$described"
+          {
+            echo "### $RUNTIME_IDENTIFIER publish"
+            echo
+            echo "- runtime identifier: \`$RUNTIME_IDENTIFIER\`"
+            echo "- files: $count ($megabytes MB)"
+            echo "- \`$described\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.image }}_arm64
+          path: ${{ env.PUBLISH_OUTPUT }}
+          if-no-files-found: error
+          retention-days: 1 # Fallback only - cleanup deletes it, unless keep-pr-artifacts on a PR
+
+  # A `uses:` job takes no `runs-on`; the nested workflow's own input defaults to windows-latest.
+  # No test command: test-win-x64 has run the tests.
+  publish-win-x64:
+    needs: [sdk-version, build-test-style, dependency-majors, decide-publish, app-version, test-win-x64]
+    if: >-
+      ${{ !cancelled() && inputs.win-x64
+      && needs.decide-publish.outputs.publish == 'true'
+      && needs.app-version.result == 'success'
+      && needs.build-test-style.result == 'success'
+      && (needs.dependency-majors.result == 'success' || needs.dependency-majors.result == 'skipped')
+      && (needs.test-win-x64.result == 'success' || needs.test-win-x64.result == 'skipped') }}
+    permissions:
+      contents: read
+    uses: VION-IoT/shared-workflows/.github/workflows/dotnet-win-x64.yml@v1
+    with:
+      solution: ${{ inputs.solution }}
+      publish-project: ${{ inputs.publish-project }}
+      dotnet-version: ${{ needs.sdk-version.outputs.version }}
+      version: ${{ needs.app-version.outputs.version }}
+      artifact-name: ${{ inputs.image }}_win-x64
+
+  # The only job without `permissions:`: it inherits the caller's grant, `contents: write` for a
+  # caller with win-x64. The upload needs `gh`, which GitHub's runners preinstall and VION's own do
+  # not, so this job runs on a GitHub-hosted one.
+  release-win-x64:
+    needs: [app-version, publish-win-x64]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.image }}_win-x64
+          path: publish/win-x64
+
+      - name: Package the publish
+        shell: pwsh
+        env:
+          IMAGE: ${{ inputs.image }}
+          VERSION: ${{ needs.app-version.outputs.version }}
+        run: |
+          $archive = "$env:IMAGE-$env:VERSION-win-x64.zip"
+          Compress-Archive -Path publish/win-x64/* -DestinationPath $archive
+          # sha256sum's own format, so the hash can be verified with `sha256sum -c` on Linux.
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
+          "$hash  $archive`n" | Out-File -FilePath "$archive.sha256" -Encoding ascii -NoNewline
+          Write-Host "$hash  $archive"
+          "ARCHIVE=$archive" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Attach to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # --repo because the job checks nothing out: `gh` otherwise resolves the repository from a git
+        # remote and dies with `not a git repository` before uploading anything.
+        # --clobber so a re-run of the same tag replaces the asset instead of failing.
+        run: gh release upload "$env:GITHUB_REF_NAME" "$env:ARCHIVE" "$env:ARCHIVE.sha256" --repo "$env:GITHUB_REPOSITORY" --clobber
+
+  # Off pull requests only: a pull request pushes no image. Runs on x64 with QEMU for the arm64
+  # platform's Dockerfile steps.
+  push-linux-image:
+    needs: [decide-publish, publish-linux-x64, publish-linux-arm64]
+    if: >-
+      ${{ !cancelled() && github.event_name != 'pull_request'
+      && needs.decide-publish.outputs.publish == 'true'
+      && (inputs.linux-x64 || inputs.linux-arm64)
+      && (!inputs.linux-x64 || needs.publish-linux-x64.result == 'success')
+      && (!inputs.linux-arm64 || needs.publish-linux-arm64.result == 'success') }}
+    runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64"]') }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - if: ${{ inputs.linux-x64 }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.image }}_amd64
+          path: ${{ inputs.docker-context }}/publish/amd64
+
+      - if: ${{ inputs.linux-arm64 }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.image }}_arm64
+          path: ${{ inputs.docker-context }}/publish/arm64
+
+      - uses: VION-IoT/shared-workflows/actions/docker-tags@v1
+        id: meta-acr
+        with:
+          images: vionimages.azurecr.io/${{ inputs.image }}
+
+      - uses: VION-IoT/shared-workflows/actions/docker-tags@v1
+        id: meta-dockerhub
+        with:
+          images: vioniot/${{ inputs.image }}
+          release-only: 'true'
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to ACR (vionimages, push target)
+        uses: docker/login-action@v3
+        with:
+          registry: vionimages.azurecr.io
+          username: ${{ secrets.VIONIMAGES_ACR_USERNAME }}
+          password: ${{ secrets.VIONIMAGES_ACR_PASSWORD }}
+
+      - name: Login to Docker Hub
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.docker-context }}
+          platforms: ${{ inputs.linux-x64 && inputs.linux-arm64 && 'linux/amd64,linux/arm64' || inputs.linux-x64 && 'linux/amd64' || 'linux/arm64' }}
+          push: true
+          tags: |
+            ${{ steps.meta-acr.outputs.tags }}
+            ${{ steps.meta-dockerhub.outputs.tags }}
+          labels: ${{ steps.meta-acr.outputs.labels }}
+
+  # Deletes this call's artifacts by name, never every artifact of the run: two calls in one run must
+  # not delete each other's. Needs the push and the release, so on a tag both have downloaded what
+  # they read first. One step per target, each only when that publish uploaded something.
+  cleanup:
+    needs: [publish-linux-x64, publish-linux-arm64, publish-win-x64, push-linux-image, release-win-x64]
+    if: >-
+      ${{ always()
+      && !(github.event_name == 'pull_request' && inputs.keep-pr-artifacts)
+      && (needs.publish-linux-x64.result == 'success'
+        || needs.publish-linux-arm64.result == 'success'
+        || needs.publish-win-x64.result == 'success') }}
+    runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-latest' || fromJSON('["self-hosted","Linux"]') }}
+    permissions:
+      contents: read
+    steps:
+      - if: ${{ needs.publish-linux-x64.result == 'success' }}
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: ${{ inputs.image }}_amd64
+
+      - if: ${{ needs.publish-linux-arm64.result == 'success' }}
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: ${{ inputs.image }}_arm64
+
+      - if: ${{ needs.publish-win-x64.result == 'success' }}
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: ${{ inputs.image }}_win-x64
