@@ -7,6 +7,8 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+## v1.17.0 — 2026-10-09
+
 ### Added
 
 - **`dotnet-aot-app.yml`** — the pipeline of a .NET NativeAOT app that ships as a container image,
