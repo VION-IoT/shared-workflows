@@ -7,6 +7,8 @@ name: .NET NativeAOT app
 # The caller provides:
 #   - a `global.json` that pins `sdk.version`. Every job that restores uses that SDK.
 #   - a `Dockerfile` in `docker-context` that copies `publish/${TARGETARCH}/`.
+#   - committed `packages.lock.json` files, which the `dependency-majors` check reads; it fails when
+#     there are none. Not needed with `check-dependency-majors: false`.
 #   - `secrets: inherit`, for the registry logins.
 #   - `contents: write` on the calling job, for the release upload. Only with `win-x64: true`.
 #   - `ready_for_review` in its `pull_request` types. Only if it opens draft pull requests, which run
@@ -83,7 +85,8 @@ on:
         default: true
         description: >-
           Run the `dependency-majors` job, which fails when a package or project in a committed
-          packages.lock.json resolves a dependency at a higher major than it declares
+          packages.lock.json resolves a dependency at a higher major than it declares, and when no
+          packages.lock.json is committed
       dependency-majors-allow-list:
         required: false
         type: string
