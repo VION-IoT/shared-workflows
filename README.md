@@ -19,6 +19,7 @@ For cross-repo context see
 |----------|---------|
 | `publish-nuget.yml` | .NET build + pack + push to private feed and (on stable tag) nuget.org with API key. Optional `gate: true` runs the build/test/style gate before packing (one build); optional `verify-script` runs a caller's PowerShell script on the packed packages before either push, and a failing script pushes nothing. Proven by `proof-publish-nuget.yml` |
 | `dotnet-ci.yml` | .NET build + test + verify code style on PRs. Thin wrapper around the `dotnet-gate` composite (the shared gate). Optional `check-dependency-majors: true` adds a `dependency-majors` job beside the gate that fails when a committed `packages.lock.json` resolves a dependency at a higher major than a package or project declares; `dependency-majors-allow-list` names the caller's JSON allow-list of reviewed edges, relative to the repo root |
+| `dotnet-aot-app.yml` | The whole pipeline of a NativeAOT app shipped as a container image: SDK from `global.json`, the `dotnet-gate` build + test + style, the optional `dependency-majors` job, a pull-request publish decision, the app version, NativeAOT publishes for `linux-x64` / `linux-arm64` (musl, in the pinned Alpine SDK image) and `win-x64` (through `dotnet-win-x64.yml`), the win-x64 zip on a `v*` release, the image push to `vionimages.azurecr.io/<image>` and `vioniot/<image>`, and the deletion of its own artifacts. One boolean per target; called from a job named `ci-cd`, which grants `contents: write` with `win-x64: true`. Proven by `proof-dotnet-aot-app.yml` |
 | `deploy-aks.yml` | OIDC Azure login → AKS context → `kubectl set image` → rollout wait |
 | `close-external-prs.yml` | Auto-close PRs from forks (source-available repos) |
 
@@ -117,6 +118,8 @@ Per-secret consumer map:
 | `NUGET_API_KEY` | `publish-nuget.yml` (optional; required only when `push-to-nuget-org: true`) |
 | `ARTIFACT_SIGNING_KEY` | `sign-mender-artifact.yml` — PEM EC **P-256** private key. Custody is the artifact pipeline's CI secret store; it is never stored here |
 | `DEVICE_ID_OVERRIDE` | `mender-conformance.yml` — identifier of the dedicated CI device identity, never a fleet gateway's |
+| `VIONIMAGES_ACR_USERNAME`, `VIONIMAGES_ACR_PASSWORD` | `dotnet-aot-app.yml` (`push-linux-image`, every run off a pull request that publishes a Linux target) |
+| `DOCKERHUB_USERNAME`, `DOCKERHUB_PAT` | `dotnet-aot-app.yml` (`push-linux-image`, on a `v*` tag) |
 
 ## Versioning
 
