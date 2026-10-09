@@ -25,8 +25,9 @@ name: .NET win-x64 publish
 # Caller is responsible for:
 #   - `private-feed: true` plus `secrets: inherit` (or an explicit `AZURE_DEVOPS_PAT`) when the
 #     solution restores anything from the VION private feed. Left false, the restore sees public
-#     feeds only — which is all the fixture and `vion-agent-windows` need, but not `mesh`
-#     (`vion-contracts`, `Vion.Telemetry`), the consumer that made this wiring necessary
+#     feeds only — which is all the fixture, `vion-agent-windows` and `mesh` need: the VION packages
+#     mesh restores (`Vion.Contracts`, `Vion.Telemetry.Export`, `Vion.Telemetry.Instrumentation`)
+#     are on nuget.org
 #   - granting `contents: read`
 
 on:
