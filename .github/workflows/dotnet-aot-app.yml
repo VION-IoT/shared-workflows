@@ -337,7 +337,11 @@ jobs:
       RUNTIME_IDENTIFIER: linux-musl-x64
       PUBLISH_OUTPUT: ${{ inputs.docker-context }}/publish/amd64
     steps:
+      # No token left in .git/config: the checkout is mounted into the container that runs the pull
+      # request's MSBuild as root, and nothing here uses git after this step.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Publish ${{ env.RUNTIME_IDENTIFIER }} (AOT) in Alpine container
         shell: bash
@@ -417,7 +421,11 @@ jobs:
       RUNTIME_IDENTIFIER: linux-musl-arm64
       PUBLISH_OUTPUT: ${{ inputs.docker-context }}/publish/arm64
     steps:
+      # No token left in .git/config: the checkout is mounted into the container that runs the pull
+      # request's MSBuild as root, and nothing here uses git after this step.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Publish ${{ env.RUNTIME_IDENTIFIER }} (AOT) in Alpine container
         shell: bash
