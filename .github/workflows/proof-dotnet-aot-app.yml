@@ -1,0 +1,168 @@
+name: Proof — .NET NativeAOT app
+# In-repo proof for the reusable workflow `dotnet-aot-app.yml`, run against the fixture under
+# tests/fixtures/dotnet-aot-app/: a NativeAOT console app with linux-musl-x64, linux-musl-arm64 and
+# win-x64 targets, locked restores, an SDK pinned in its global.json, and one test project. The
+# workflow is called twice, on GitHub's runners (`github-hosted-runners: true`), with different
+# `image` values so each call's artifacts have their own names:
+#   - `every-target` grants `contents: write` and turns on all three targets, with
+#     `keep-pr-artifacts: false`;
+#   - `read-only` grants only `contents: read` and turns on the Linux targets, with
+#     `keep-pr-artifacts: true`.
+# Both set `publish-only-on-build-changes: false`, so both publish. Three jobs then assert:
+#   1. `read-only`'s artifacts are still there, and `file` reports x86-64 for amd64 and aarch64 for
+#      arm64;
+#   2. `every-target`'s `test-win-x64`, `publish-win-x64` and `cleanup` succeeded, and its three
+#      artifacts are gone — deleted by name, while `read-only`'s in the same run were not;
+#   3. both calls' `workflow-file` output names this file: inside a called workflow
+#      `github.workflow_ref` names the caller's top-level workflow, which is what the pull-request
+#      publish filter watches.
+# What the run itself shows, and no job can assert: a run that starts at all with `read-only`'s
+# grant shows that a caller granting only `contents: read` with `win-x64: false` is accepted. A
+# refused call fails the run before any job runs.
+#
+# What it does not cover:
+#   - `push-linux-image` and `release-win-x64`: both run off pull requests only, and this repository
+#     holds no registry secrets. For the same reason there is no workflow_dispatch: outside a pull
+#     request `push-linux-image` runs and fails on the login.
+#   - the file filter's match, since both calls publish regardless of what changed.
+#   - `sdk-version` failing on an empty version: a `uses:` job cannot be asserted to fail —
+#     `continue-on-error` is not among the keys a `uses:` job accepts.
+# The fixture's global.json supplies only the version string: this repository has no root
+# global.json, so the SDK is isolated by `DOTNET_INSTALL_DIR` and by the pinned Alpine image tag.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/dotnet-aot-app.yml'
+      - '.github/workflows/proof-dotnet-aot-app.yml'
+      - 'tests/fixtures/dotnet-aot-app/**'
+
+permissions:
+  contents: read
+
+jobs:
+  every-target:
+    # What a caller with win-x64 grants, for release-win-x64.
+    permissions:
+      contents: write
+    uses: ./.github/workflows/dotnet-aot-app.yml
+    with:
+      solution: tests/fixtures/dotnet-aot-app/AotAppFixture.slnx
+      publish-project: tests/fixtures/dotnet-aot-app/src/Vion.Fixture.AotApp/Vion.Fixture.AotApp.csproj
+      image: proof-aot-every-target
+      docker-context: tests/fixtures/dotnet-aot-app
+      linux-x64: true
+      linux-arm64: true
+      win-x64: true
+      publish-only-on-build-changes: false
+      keep-pr-artifacts: false
+      github-hosted-runners: true
+      global-json: tests/fixtures/dotnet-aot-app/global.json
+      # The fixture carries no ReSharper setup; the style verify is dotnet-ci.yml's to prove.
+      run-style: false
+
+  read-only:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/dotnet-aot-app.yml
+    with:
+      solution: tests/fixtures/dotnet-aot-app/AotAppFixture.slnx
+      publish-project: tests/fixtures/dotnet-aot-app/src/Vion.Fixture.AotApp/Vion.Fixture.AotApp.csproj
+      image: proof-aot-read-only
+      docker-context: tests/fixtures/dotnet-aot-app
+      linux-x64: true
+      linux-arm64: true
+      publish-only-on-build-changes: false
+      keep-pr-artifacts: true
+      github-hosted-runners: true
+      global-json: tests/fixtures/dotnet-aot-app/global.json
+      run-style: false
+
+  kept-artifacts:
+    name: Assert read-only's artifacts are kept and built for their targets
+    needs: read-only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: proof-aot-read-only_amd64
+          path: amd64
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: proof-aot-read-only_arm64
+          path: arm64
+
+      - name: file reports x86-64 for amd64 and aarch64 for arm64
+        shell: bash
+        run: |
+          amd64=$(file amd64/Vion.Fixture.AotApp)
+          arm64=$(file arm64/Vion.Fixture.AotApp)
+          echo "$amd64"
+          echo "$arm64"
+          [[ "$amd64" == *x86-64* ]] || { echo "::error::amd64 is not an x86-64 executable: $amd64"; exit 1; }
+          [[ "$arm64" == *aarch64* ]] || { echo "::error::arm64 is not an aarch64 executable: $arm64"; exit 1; }
+          echo 'Confirmed: keep-pr-artifacts left both publishes, each built for its target.'
+
+  cleaned-up:
+    name: Assert every-target published win-x64 and deleted its own artifacts
+    needs: every-target
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: test-win-x64, publish-win-x64 and cleanup succeeded, and the artifacts are gone
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # One page is enough: this workflow has under thirty jobs. `filter=latest` lists each job's
+          # latest attempt, so a "re-run failed jobs" that re-runs only this one still finds the rest.
+          $jobs = @((gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/jobs?filter=latest&per_page=100" |
+              ConvertFrom-Json).jobs)
+          # A called workflow's job is listed as "<caller job> / <job id>", and a job of the workflow
+          # that one calls as "<caller job> / <job id> / <its job id>".
+          $expected = @(
+              @{ Name = 'every-target / test-win-x64'; Like = 'every-target / test-win-x64' },
+              @{ Name = 'every-target / publish-win-x64'; Like = 'every-target / publish-win-x64 / *' },
+              @{ Name = 'every-target / publish-linux-x64'; Like = 'every-target / publish-linux-x64' },
+              @{ Name = 'every-target / publish-linux-arm64'; Like = 'every-target / publish-linux-arm64' },
+              @{ Name = 'every-target / cleanup'; Like = 'every-target / cleanup' }
+          )
+          foreach ($job in $expected) {
+              $found = @($jobs | Where-Object name -like $job.Like)
+              if ($found.Count -ne 1) {
+                  throw "Expected one job '$($job.Name)', found $($found.Count): [$(($jobs | ForEach-Object name) -join '; ')]."
+              }
+              if ($found[0].conclusion -ne 'success') {
+                  throw "'$($found[0].name)' concluded '$($found[0].conclusion)', expected 'success'."
+              }
+              Write-Host "$($found[0].name): success"
+          }
+
+          # The three publishes uploaded (asserted above), so an artifact missing now was deleted.
+          $artifacts = @((gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/artifacts?per_page=100" |
+              ConvertFrom-Json).artifacts | ForEach-Object name)
+          Write-Host "Artifacts of this run: [$($artifacts -join '; ')]"
+          $left = @('proof-aot-every-target_amd64', 'proof-aot-every-target_arm64', 'proof-aot-every-target_win-x64' |
+              Where-Object { $_ -in $artifacts })
+          if ($left) { throw "cleanup left every-target's artifacts behind: [$($left -join '; ')]." }
+          Write-Host 'Confirmed: every-target tested and published win-x64, and cleanup deleted its three artifacts.'
+
+  workflow-file:
+    name: Assert both calls name this file as the caller's workflow
+    needs: [every-target, read-only]
+    runs-on: ubuntu-latest
+    steps:
+      - name: decide-publish's workflow-file is .github/workflows/proof-dotnet-aot-app.yml
+        shell: bash
+        env:
+          EVERY_TARGET: ${{ needs.every-target.outputs.workflow-file }}
+          READ_ONLY: ${{ needs.read-only.outputs.workflow-file }}
+        run: |
+          expected=.github/workflows/proof-dotnet-aot-app.yml
+          echo "every-target: '$EVERY_TARGET'"
+          echo "read-only: '$READ_ONLY'"
+          [ "$EVERY_TARGET" = "$expected" ] || { echo "::error::every-target reports '$EVERY_TARGET', expected '$expected'."; exit 1; }
+          [ "$READ_ONLY" = "$expected" ] || { echo "::error::read-only reports '$READ_ONLY', expected '$expected'."; exit 1; }
+          echo 'Confirmed: github.workflow_ref in a called workflow names the caller.'
