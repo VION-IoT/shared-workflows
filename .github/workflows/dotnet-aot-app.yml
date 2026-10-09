@@ -503,10 +503,15 @@ jobs:
 
   # The only job without `permissions:`: it inherits the caller's grant, `contents: write` for a
   # caller with win-x64. The upload needs `gh`, which GitHub's runners preinstall and VION's own do
-  # not, so this job runs on a GitHub-hosted one.
+  # not, so this job runs on a GitHub-hosted one. Its `if:` names the results it needs because the
+  # implicit success() also counts a skipped job further up the chain (dependency-majors,
+  # test-win-x64), which would skip the release behind a green run.
   release-win-x64:
     needs: [app-version, publish-win-x64]
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    if: >-
+      ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v')
+      && needs.app-version.result == 'success'
+      && needs.publish-win-x64.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
