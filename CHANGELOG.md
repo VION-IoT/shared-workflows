@@ -9,10 +9,10 @@ input/output rename or removal is a breaking change, additions are not.
 
 ### Added
 
-- **`dotnet-aot-app.yml`** — the whole pipeline of a NativeAOT app that ships as a container image,
+- **`dotnet-aot-app.yml`** — the pipeline of a .NET NativeAOT app that ships as a container image,
   from typed inputs: `sdk-version` reads `global.json` and fails, naming the file, when it finds no
   version; `build-test-style` runs `actions/dotnet-gate`; `dependency-majors` runs as on
-  `dotnet-ci.yml`; `decide-publish` publishes off pull requests always and on one only when it
+  `dotnet-ci.yml`; `decide-publish` publishes outside pull requests always and on one only when it
   changes the build configuration or the caller's own workflow file (`publish-only-on-build-changes`,
   default `true`); `app-version` computes `X.Y.Z` on a tag and `0.0.0-ci.<run>` otherwise;
   `publish-linux-x64` and `publish-linux-arm64` publish NativeAOT for musl in the pinned Alpine SDK
@@ -22,23 +22,16 @@ input/output rename or removal is a breaking change, additions are not.
   `vioniot/<image>`; `cleanup` deletes the call's own artifacts, unless `keep-pr-artifacts` on a
   pull request. Inputs: `solution`, `publish-project`, `image`, `docker-context`, `run-tests`,
   `linux-x64`, `linux-arm64`, `win-x64`, `publish-only-on-build-changes`, `keep-pr-artifacts`,
-  `check-dependency-majors`, `dependency-majors-allow-list`, and, for the proof only,
-  `github-hosted-runners`, `global-json` and `run-style`. Output: `workflow-file`. Secrets, optional:
-  `VIONIMAGES_ACR_USERNAME`, `VIONIMAGES_ACR_PASSWORD`, `DOCKERHUB_USERNAME`, `DOCKERHUB_PAT`. Every
-  job declares `contents: read` but `release-win-x64`, which takes the caller's grant: a caller with
+  `check-dependency-majors`, `dependency-majors-allow-list`, `github-hosted-runners`, `global-json`
+  and `run-style`. Output: `workflow-file`. Secrets, optional: `VIONIMAGES_ACR_USERNAME`,
+  `VIONIMAGES_ACR_PASSWORD`, `DOCKERHUB_USERNAME`, `DOCKERHUB_PAT`. Every job declares
+  `contents: read` but `release-win-x64`, which takes the caller's grant: a caller with
   `win-x64: true` grants `contents: write`. A draft pull request runs only `sdk-version`,
   `build-test-style` and `dependency-majors`.
 
-  Why: mesh, thingsboard-service-provider, hal-raspberry and hal-waveshare-ipcbox each carried a
-  copy of this pipeline (`specs/in-flight/2026-10-09-dotnet-aot-app.md`). `proof-dotnet-aot-app.yml`
-  is new: it calls the workflow twice on GitHub's runners over `tests/fixtures/dotnet-aot-app/`, and
-  asserts the kept and the deleted artifacts, the executables' architectures, the win-x64 lane, and
-  the caller's workflow file read from `github.workflow_ref`.
-
-### Fixed
-
-- **`dotnet-win-x64.yml`'s header** no longer says mesh needs the private feed: `Vion.Contracts`,
-  `Vion.Telemetry.Export` and `Vion.Telemetry.Instrumentation` are on nuget.org.
+  `proof-dotnet-aot-app.yml` is new: it calls the workflow twice on GitHub's runners over
+  `tests/fixtures/dotnet-aot-app/`, and asserts the kept and the deleted artifacts, the executables'
+  architectures, the win-x64 lane, and the caller's workflow file read from `github.workflow_ref`.
 
 ## v1.16.0 — 2026-10-08
 
