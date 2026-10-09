@@ -6,7 +6,7 @@
         <IsPublishable>false</IsPublishable>
     </PropertyGroup>
 
-    <!-- The callers' shape: MSTest under VSTest, so the workflow's plain `dotnet test` runs it. -->
+    <!-- MSTest under VSTest, so the workflow's plain `dotnet test` runs it. -->
     <ItemGroup>
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
         <PackageReference Include="MSTest" Version="4.4.1" />

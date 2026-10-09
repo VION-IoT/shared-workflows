@@ -1,39 +1,18 @@
 name: .NET NativeAOT app
-# Reusable workflow: the whole pipeline of a VION NativeAOT app that ships as a multi-arch container
-# image and, optionally, a win-x64 release zip. It reads the SDK from global.json, builds and tests
-# through `actions/dotnet-gate`, decides whether a pull request publishes, computes the app version,
-# publishes NativeAOT for linux-musl-x64 and linux-musl-arm64 in the pinned Alpine SDK image and for
-# win-x64 through `dotnet-win-x64.yml`, attaches the win-x64 zip to a `v*` release, pushes the image
-# to `vionimages.azurecr.io/<image>` (every non-PR run) and `vioniot/<image>` (releases only), and
-# deletes its artifacts. mesh, thingsboard-service-provider, hal-raspberry and hal-waveshare-ipcbox
-# each carried a copy of this (specs/in-flight/2026-10-09-dotnet-aot-app.md).
+# Reusable workflow for a .NET NativeAOT app shipped as a multi-arch container image and, with
+# `win-x64`, a Windows zip on each `v*` release. Builds and tests the solution, publishes the enabled
+# targets, pushes `vionimages.azurecr.io/<image>` on every run outside a pull request and
+# `vioniot/<image>` on a release, then deletes its artifacts.
 #
-# Caller is responsible for:
-#   - calling it from a job named `ci-cd`, so the checks read `ci-cd / <job>`, with `secrets: inherit`
-#     (VIONIMAGES_ACR_USERNAME, VIONIMAGES_ACR_PASSWORD, DOCKERHUB_USERNAME, DOCKERHUB_PAT)
-#   - a `Dockerfile` in `docker-context` that copies `publish/${TARGETARCH}/`: the Linux publishes are
-#     staged into `<docker-context>/publish/amd64` and `<docker-context>/publish/arm64`
-#   - a `global.json` pinning `sdk.version`: every restore is locked, and the lock files record the
-#     SDK-injected ILCompiler at the version that SDK bundles
-#   - granting `contents: write` on the calling job with `win-x64: true`, for `release-win-x64`;
-#     `contents: read` otherwise
-#   - keeping `ready_for_review` in its `pull_request` types if it opens drafts: a draft runs only
-#     `sdk-version`, `build-test-style` and `dependency-majors`, and marking it ready starts the rest
-#   - unless `run-style` is false, `scripts/cleanup-code.ps1`, `.config/dotnet-tools.json` and a
-#     `.sln.DotSettings` cleanup profile, as for `dotnet-ci.yml`
-#
-# Permissions: every job declares `contents: read` except `release-win-x64`, which declares none and
-# inherits the caller's grant; there is no workflow-level `permissions:`. The Linux publishes mount
-# the checkout into a root container that runs the pull request's MSBuild, so a caller's write grant
-# must not reach them.
-#
-# Runners: each job's self-hosted label set is written once, in its `runs-on`.
-# `github-hosted-runners: true` moves every job to GitHub's runners; only the proof sets it, together
-# with `global-json` and `run-style`.
-#
-# Skipped is not failed: a skipped job skips its dependants by default, so the downstream `if:`s use
-# `!cancelled()` and the results of the jobs they need. `cleanup` keeps `always()`, so a cancelled
-# run still deletes its artifacts.
+# The caller provides:
+#   - a `global.json` that pins `sdk.version`. Every job that restores uses that SDK.
+#   - a `Dockerfile` in `docker-context` that copies `publish/${TARGETARCH}/`.
+#   - `secrets: inherit`, for the registry logins.
+#   - `contents: write` on the calling job, for the release upload. Only with `win-x64: true`.
+#   - `ready_for_review` in its `pull_request` types. Only if it opens draft pull requests, which run
+#     just `sdk-version`, `build-test-style` and `dependency-majors`.
+#   - the files the style check runs: `scripts/cleanup-code.ps1`, the `.config/dotnet-tools.json`
+#     that pins `jb`, and a `.sln.DotSettings` cleanup profile. Not needed with `run-style: false`.
 
 on:
   workflow_call:
@@ -116,17 +95,17 @@ on:
         required: false
         type: boolean
         default: false
-        description: Run every job on GitHub's runners instead of VION's. Set only by the proof
+        description: Run every job on GitHub-hosted runners instead of VION's self-hosted ones
       global-json:
         required: false
         type: string
         default: 'global.json'
-        description: Path of the global.json sdk-version reads. Set only by the proof
+        description: Path of the global.json that pins the SDK
       run-style:
         required: false
         type: boolean
         default: true
-        description: Run the style verify in build-test-style. Set only by the proof
+        description: Run the style check in build-test-style
     outputs:
       workflow-file:
         description: >-
@@ -404,8 +383,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1 # Fallback only - cleanup deletes it, unless keep-pr-artifacts on a PR
 
-  # The x64 job with the arm64 target. docker run, not a job-level container:, also because GitHub's
-  # JS actions can't run in an arm64 Alpine container (musl Node is x64-only).
+  # publish-linux-x64 for arm64. A job-level container is also ruled out here because GitHub's JS
+  # actions can't run in an arm64 Alpine container (musl Node is x64-only).
   publish-linux-arm64:
     needs: [sdk-version, build-test-style, dependency-majors, decide-publish, app-version]
     if: >-
@@ -509,11 +488,11 @@ jobs:
       version: ${{ needs.app-version.outputs.version }}
       artifact-name: ${{ inputs.image }}_win-x64
 
-  # The only job without `permissions:`: it inherits the caller's grant, `contents: write` for a
-  # caller with win-x64. The upload needs `gh`, which GitHub's runners preinstall and VION's own do
-  # not, so this job runs on a GitHub-hosted one. Its `if:` names the results it needs because the
-  # implicit success() also counts a skipped job further up the chain (dependency-majors,
-  # test-win-x64), which would skip the release behind a green run.
+  # The only job without `permissions:`, so it gets the caller's `contents: write` and every other
+  # job stays at `contents: read`. Runs on a GitHub-hosted runner for `gh`, which VION's own runners
+  # lack. Its `if:` names the results it needs because the implicit success() also counts a skipped
+  # job further up the chain (dependency-majors, test-win-x64), which would skip the release behind
+  # a green run.
   release-win-x64:
     needs: [app-version, publish-win-x64]
     if: >-
