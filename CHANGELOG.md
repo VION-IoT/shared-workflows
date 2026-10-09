@@ -7,6 +7,32 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+### Added
+
+- **`dotnet-aot-app.yml`** — the pipeline of a .NET NativeAOT app that ships as a container image,
+  from typed inputs: `sdk-version` reads `global.json` and fails, naming the file, when it finds no
+  version; `build-test-style` runs `actions/dotnet-gate`; `dependency-majors` runs as on
+  `dotnet-ci.yml`, but on by default (`check-dependency-majors: true`); `decide-publish` publishes outside pull requests always and on one only when it
+  changes the build configuration or the caller's own workflow file (`publish-only-on-build-changes`,
+  default `true`); `app-version` computes `X.Y.Z` on a tag and `0.0.0-ci.<run>` otherwise;
+  `publish-linux-x64` and `publish-linux-arm64` publish NativeAOT for musl in the pinned Alpine SDK
+  image; `test-win-x64` and `publish-win-x64` (through `dotnet-win-x64.yml`) test and publish
+  win-x64; `release-win-x64` attaches `<image>-<version>-win-x64.zip` and its `.sha256` to a `v*`
+  release; `push-linux-image` pushes `vionimages.azurecr.io/<image>` and, on a release,
+  `vioniot/<image>`; `cleanup` deletes the call's own artifacts, unless `keep-pr-artifacts` on a
+  pull request. Inputs: `solution`, `publish-project`, `image`, `docker-context`, `run-tests`,
+  `linux-x64`, `linux-arm64`, `win-x64`, `publish-only-on-build-changes`, `keep-pr-artifacts`,
+  `check-dependency-majors`, `dependency-majors-allow-list`, `github-hosted-runners`, `global-json`
+  and `run-style`. Output: `workflow-file`. Secrets, optional: `VIONIMAGES_ACR_USERNAME`,
+  `VIONIMAGES_ACR_PASSWORD`, `DOCKERHUB_USERNAME`, `DOCKERHUB_PAT`. Every job declares
+  `contents: read` but `release-win-x64`, which takes the caller's grant: a caller with
+  `win-x64: true` grants `contents: write`. A draft pull request runs only `sdk-version`,
+  `build-test-style` and `dependency-majors`.
+
+  `proof-dotnet-aot-app.yml` is new: it calls the workflow twice on GitHub's runners over
+  `tests/fixtures/dotnet-aot-app/`, and asserts the kept and the deleted artifacts, the executables'
+  architectures, the win-x64 lane, and the caller's workflow file read from `github.workflow_ref`.
+
 ## v1.16.0 — 2026-10-08
 
 ### Added

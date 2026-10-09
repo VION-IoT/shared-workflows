@@ -1,16 +1,14 @@
 name: .NET win-x64 publish
 # Reusable workflow: build a .NET solution, run a CALLER-SUPPLIED test command, and produce a
-# self-contained `win-x64` publish of one project. The Windows-service half of the VION Windows
-# CI lane (specs/in-flight/2026-08-06-cx5130-windows-gateway.md).
+# self-contained `win-x64` publish of one project, for VION's Windows services.
 #
 # Why this is not `dotnet-ci.yml` with a different runner:
 #
-#   - **The test command is the caller's, not ours.** `vion-agent-windows` runs its tests with
-#     `dotnet run --project <test.csproj>`: the test project is an executable
-#     (`EnableMSTestRunner`, Microsoft.Testing.Platform) and on that SDK `dotnet test` still
-#     routes through the legacy VSTest target and fails outright with
-#     `Testing with VSTest target is no longer supported`. A workflow that hardcodes
-#     `dotnet test` cannot build that repo at all, so the command is an input.
+#   - **The test command is the caller's, not ours.** A test project that is an executable
+#     (`EnableMSTestRunner`, Microsoft.Testing.Platform) runs with `dotnet run --project
+#     <test.csproj>`: on this SDK `dotnet test` still routes it through the legacy VSTest target and
+#     fails outright with `Testing with VSTest target is no longer supported`. A workflow that
+#     hardcodes `dotnet test` cannot build such a repository at all, so the command is an input.
 #   - **The output is a self-contained publish, not a NuGet package.** A Windows gateway has no
 #     shared .NET runtime to rely on; every service ships its own.
 #   - **No ReSharper style gate.** `actions/dotnet-gate` runs the caller's
@@ -18,15 +16,13 @@ name: .NET win-x64 publish
 #     run `dotnet-ci.yml` alongside this workflow.
 #
 # The runtime identifier is fixed at `win-x64` and is deliberately NOT an input: the CX5130 fleet
-# is all 64-bit LTSC 2019/2021 (spec reviewer question 4, and `vion-agent-windows`'s own
-# Directory.Build.props), so there is no `win-x86` path anywhere and none should be reachable by
-# passing a string.
+# is all 64-bit LTSC 2019/2021, so there is no `win-x86` path anywhere and none should be reachable
+# by passing a string.
 #
 # Caller is responsible for:
 #   - `private-feed: true` plus `secrets: inherit` (or an explicit `AZURE_DEVOPS_PAT`) when the
 #     solution restores anything from the VION private feed. Left false, the restore sees public
-#     feeds only — which is all the fixture and `vion-agent-windows` need, but not `mesh`
-#     (`vion-contracts`, `Vion.Telemetry`), the consumer that made this wiring necessary
+#     feeds only
 #   - granting `contents: read`
 
 on:
@@ -46,9 +42,9 @@ on:
         default: ''
         description: >-
           Command to run the tests, executed with pwsh in the repo root. Empty (default) skips
-          testing. This is a command, not a filter: `vion-agent-windows` needs
-          'dotnet run --project tests/Vion.Agent.Windows.Tests/Vion.Agent.Windows.Tests.csproj'
-          because `dotnet test` routes to legacy VSTest on its SDK and fails.
+          testing. This is a command, not a filter: an executable MSTest project needs
+          'dotnet run --project <test.csproj>', because `dotnet test` routes it to legacy VSTest
+          and fails.
       private-feed:
         required: false
         type: boolean
@@ -165,8 +161,8 @@ jobs:
 
       # No `-r` here: `dotnet build <solution> -r <rid>` is rejected outright with NETSDK1134
       # ("Building a solution with a specific RuntimeIdentifier is not supported"). The RID belongs
-      # to the projects — `vion-agent-windows` sets it in Directory.Build.props — and the publish
-      # step below applies it where it is legal to.
+      # to the projects, in their Directory.Build.props, and the publish step below applies it where
+      # it is legal to.
       - name: Build
         shell: pwsh
         env:
@@ -204,7 +200,7 @@ jobs:
       # for a trimmed one — because that injection is gated on `_IsPublishing`. A lock file written
       # by `dotnet publish` therefore records direct references that `dotnet build` does not see,
       # and locked mode on the build would fail every AOT caller with NU1004 for a lock file that is
-      # in fact correct. `mesh` is exactly that caller.
+      # in fact correct.
       - name: Publish
         shell: pwsh
         env:

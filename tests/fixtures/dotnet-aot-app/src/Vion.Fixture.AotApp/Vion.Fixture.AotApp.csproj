@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <RootNamespace>Vion.Fixture.AotApp</RootNamespace>
+        <PublishAot>true</PublishAot>
+        <!-- The three targets dotnet-aot-app.yml publishes. No linux-musl-arm: 32-bit ARM is dropped. -->
+        <RuntimeIdentifiers>linux-musl-x64;linux-musl-arm64;win-x64</RuntimeIdentifiers>
+        <!-- Keeps the build host's RID out of the lock file; with it there, a locked linux-musl
+             publish on another host fails. -->
+        <UseDefaultPublishRuntimeIdentifier>false</UseDefaultPublishRuntimeIdentifier>
+    </PropertyGroup>
+
+</Project>
