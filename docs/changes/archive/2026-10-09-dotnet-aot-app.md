@@ -31,7 +31,10 @@ released.
   expression.
 - **D4 —** The two Linux publish jobs are written out, differing only in their target: an internal
   action would load at `@v1` and so could not be proven before release.
-- **D5 —** `cleanup` deletes this call's artifacts by name, never every artifact of the run, so two
+- **D5 —** `check-dependency-majors` defaults to `true`, unlike on `dotnet-ci.yml`, where `false`
+  kept existing callers unchanged; this workflow has none, and every intended caller turns it on.
+  `dependency-majors-allow-list` stays `''`, so a caller names its allow-list at the call site.
+- **D6 —** `cleanup` deletes this call's artifacts by name, never every artifact of the run, so two
   calls in one run do not delete each other's.
 
 ### Reviewer's questions
@@ -71,6 +74,8 @@ Points settled here:
 ## Drift checkpoints
 
 - 2026-10-09: `cleanup` deletes this call's artifacts by name, not every artifact of the run.
+- 2026-10-09: `check-dependency-majors` defaults to `true`, not `false` as first designed (decided on
+  review of the pull request).
 
 ## Tasks
 

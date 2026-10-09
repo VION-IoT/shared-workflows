@@ -80,7 +80,7 @@ on:
       check-dependency-majors:
         required: false
         type: boolean
-        default: false
+        default: true
         description: >-
           Run the `dependency-majors` job, which fails when a package or project in a committed
           packages.lock.json resolves a dependency at a higher major than it declares

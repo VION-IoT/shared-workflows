@@ -12,7 +12,7 @@ input/output rename or removal is a breaking change, additions are not.
 - **`dotnet-aot-app.yml`** — the pipeline of a .NET NativeAOT app that ships as a container image,
   from typed inputs: `sdk-version` reads `global.json` and fails, naming the file, when it finds no
   version; `build-test-style` runs `actions/dotnet-gate`; `dependency-majors` runs as on
-  `dotnet-ci.yml`; `decide-publish` publishes outside pull requests always and on one only when it
+  `dotnet-ci.yml`, but on by default (`check-dependency-majors: true`); `decide-publish` publishes outside pull requests always and on one only when it
   changes the build configuration or the caller's own workflow file (`publish-only-on-build-changes`,
   default `true`); `app-version` computes `X.Y.Z` on a tag and `0.0.0-ci.<run>` otherwise;
   `publish-linux-x64` and `publish-linux-arm64` publish NativeAOT for musl in the pinned Alpine SDK

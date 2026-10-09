@@ -60,6 +60,10 @@ jobs:
       global-json: tests/fixtures/dotnet-aot-app/global.json
       # The fixture carries no ReSharper setup; the style verify is dotnet-ci.yml's to prove.
       run-style: false
+      # The check reads every committed lock file in this repository, and
+      # tests/fixtures/dependency-majors/raised/ fails it on purpose; proof-dependency-majors.yml
+      # proves the check.
+      check-dependency-majors: false
 
   read-only:
     permissions:
@@ -77,6 +81,7 @@ jobs:
       github-hosted-runners: true
       global-json: tests/fixtures/dotnet-aot-app/global.json
       run-style: false
+      check-dependency-majors: false
 
   kept-artifacts:
     name: Assert read-only's artifacts are kept and built for their targets
