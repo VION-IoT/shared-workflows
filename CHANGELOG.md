@@ -7,6 +7,24 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+### Added
+
+- **`dotnet-aot-app.yml` ships bare binaries.** `linux-release-archives` (default `false`): on a `v*`
+  tag, the new `release-linux-archives` job attaches each enabled Linux publish to the release as
+  `<image>-<version>-linux-musl-x64.tar.gz` and `<image>-<version>-linux-musl-arm64.tar.gz`, the
+  files at the archive's root and the executable marked executable, each with a `.sha256` in
+  `sha256sum` format. Like `release-win-x64` it takes the caller's grant, so a caller passing it
+  grants `contents: write`. `push-image` (default `true`): `false` skips `push-linux-image`, so the
+  caller needs no Dockerfile and no registry secrets.
+
+### Changed
+
+- **`dotnet-aot-app.yml` names the executable by the publish project's `AssemblyName`**, read
+  through MSBuild in the publish container, rather than by the project's file name. The Linux
+  publish summaries and the release archives use it. No current caller sets an `AssemblyName`, so
+  the name is the one used before. `proof-dotnet-aot-app.yml` gives its fixture an `AssemblyName`
+  apart from its file name and calls the workflow a third time, with both new inputs.
+
 ## v1.17.0 — 2026-10-09
 
 ### Added

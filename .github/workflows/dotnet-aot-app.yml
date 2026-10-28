@@ -1,16 +1,20 @@
 name: .NET NativeAOT app
-# Reusable workflow for a .NET NativeAOT app shipped as a multi-arch container image and, with
-# `win-x64`, a Windows zip on each `v*` release. Builds and tests the solution, publishes the enabled
-# targets, pushes `vionimages.azurecr.io/<image>` on every run outside a pull request and
-# `vioniot/<image>` on a release, then deletes its artifacts.
+# Reusable workflow for a .NET NativeAOT app shipped as a multi-arch container image, as bare
+# binaries on each `v*` release, or both. Builds and tests the solution and publishes the enabled
+# targets. Pushes `vionimages.azurecr.io/<image>` on every run outside a pull request and
+# `vioniot/<image>` on a release, unless `push-image: false`. On a release it attaches a Windows zip
+# with `win-x64` and, with `linux-release-archives`, a tar.gz per enabled Linux target. Then it
+# deletes its artifacts.
 #
 # The caller provides:
 #   - a `global.json` that pins `sdk.version`. Every job that restores uses that SDK.
-#   - a `Dockerfile` in `docker-context` that copies `publish/${TARGETARCH}/`.
+#   - a `Dockerfile` in `docker-context` that copies `publish/${TARGETARCH}/`. Not needed with
+#     `push-image: false`.
 #   - committed `packages.lock.json` files, which the `dependency-majors` check reads; it fails when
 #     there are none. Not needed with `check-dependency-majors: false`.
-#   - `secrets: inherit`, for the registry logins.
-#   - `contents: write` on the calling job, for the release upload. Only with `win-x64: true`.
+#   - `secrets: inherit`, for the registry logins. Not needed with `push-image: false`.
+#   - `contents: write` on the calling job, for the release uploads. Only with `win-x64: true` or
+#     `linux-release-archives: true`.
 #   - `ready_for_review` in its `pull_request` types. Only if it opens draft pull requests, which run
 #     just `sdk-version`, `build-test-style` and `dependency-majors`.
 #   - the files the style check runs: `scripts/cleanup-code.ps1`, the `.config/dotnet-tools.json`
@@ -27,15 +31,17 @@ on:
         required: true
         type: string
         description: >-
-          Path to the .csproj to publish (relative to repo root). Its file name without `.csproj` is
-          the executable the Linux publish summaries inspect
+          Path to the .csproj to publish (relative to repo root). Its `AssemblyName`, read through
+          MSBuild, is the executable the Linux publish summaries inspect and the release archives
+          mark executable
       image:
         required: true
         type: string
         description: >-
           Image name: pushes `vionimages.azurecr.io/<image>` and `vioniot/<image>`; artifacts
           `<image>_amd64`, `<image>_arm64`, `<image>_win-x64`; release zip
-          `<image>-<app-version>-win-x64.zip`
+          `<image>-<app-version>-win-x64.zip` and release archives
+          `<image>-<app-version>-linux-musl-x64.tar.gz` and `<image>-<app-version>-linux-musl-arm64.tar.gz`
       docker-context:
         required: false
         type: string
@@ -65,6 +71,20 @@ on:
         description: >-
           Test on Windows, publish win-x64 and attach the zip to a `v*` release. Needs the calling
           job to grant `contents: write`
+      linux-release-archives:
+        required: false
+        type: boolean
+        default: false
+        description: >-
+          On a `v*` release, attach each enabled Linux publish as a tar.gz with its `.sha256`, the
+          executable marked executable. Needs the calling job to grant `contents: write`
+      push-image:
+        required: false
+        type: boolean
+        default: true
+        description: >-
+          Push the Linux publishes as an image. `false` skips push-linux-image, and with it the
+          Dockerfile and the registry secrets
       publish-only-on-build-changes:
         required: false
         type: boolean
@@ -118,16 +138,21 @@ on:
     secrets:
       VIONIMAGES_ACR_USERNAME:
         required: false
-        description: vionimages ACR user; read by push-linux-image
+        description: >-
+          vionimages ACR user; read by push-linux-image, so not with `push-image: false`
       VIONIMAGES_ACR_PASSWORD:
         required: false
-        description: vionimages ACR password; read by push-linux-image
+        description: >-
+          vionimages ACR password; read by push-linux-image, so not with `push-image: false`
       DOCKERHUB_USERNAME:
         required: false
-        description: Docker Hub user; read by push-linux-image on a `v*` tag
+        description: >-
+          Docker Hub user; read by push-linux-image on a `v*` tag, so not with `push-image: false`
       DOCKERHUB_PAT:
         required: false
-        description: Docker Hub access token; read by push-linux-image on a `v*` tag
+        description: >-
+          Docker Hub access token; read by push-linux-image on a `v*` tag, so not with
+          `push-image: false`
 
 jobs:
   # A locked restore fails with NU1004 on any SDK but the one the lock files were written with, so
@@ -531,9 +556,9 @@ jobs:
       version: ${{ needs.app-version.outputs.version }}
       artifact-name: ${{ inputs.image }}_win-x64
 
-  # The only job without `permissions:`, so it gets the caller's `contents: write` and every other
-  # job stays at `contents: read`. Runs on a GitHub-hosted runner for `gh`, which VION's own runners
-  # lack. Its `if:` names the results it needs because the implicit success() also counts a skipped
+  # With release-linux-archives, the only jobs without `permissions:`, so they get the caller's
+  # `contents: write` and every other job stays at `contents: read`. Runs on a GitHub-hosted runner
+  # for `gh`, which VION's own runners lack. Its `if:` names the results it needs because the implicit success() also counts a skipped
   # job further up the chain (dependency-majors, test-win-x64), which would skip the release behind
   # a green run.
   release-win-x64:
@@ -572,12 +597,68 @@ jobs:
         # --clobber so a re-run of the same tag replaces the asset instead of failing.
         run: gh release upload "$env:GITHUB_REF_NAME" "$env:ARCHIVE" "$env:ARCHIVE.sha256" --repo "$env:GITHUB_REPOSITORY" --clobber
 
-  # Off pull requests only: a pull request pushes no image. Runs on x64 with QEMU for the arm64
-  # platform's Dockerfile steps.
+  # release-win-x64 for the Linux publishes, without `permissions:` for the same reason. Like
+  # push-linux-image it waits for every enabled Linux target, so a release gets all its archives or
+  # none.
+  release-linux-archives:
+    needs: [app-version, publish-linux-x64, publish-linux-arm64]
+    if: >-
+      ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v')
+      && inputs.linux-release-archives
+      && needs.app-version.result == 'success'
+      && (inputs.linux-x64 || inputs.linux-arm64)
+      && (!inputs.linux-x64 || needs.publish-linux-x64.result == 'success')
+      && (!inputs.linux-arm64 || needs.publish-linux-arm64.result == 'success') }}
+    runs-on: ubuntu-latest
+    steps:
+      - if: ${{ inputs.linux-x64 }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.image }}_amd64
+          path: publish/linux-musl-x64
+
+      - if: ${{ inputs.linux-arm64 }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.image }}_arm64
+          path: publish/linux-musl-arm64
+
+      - name: Package the publishes
+        shell: bash
+        env:
+          IMAGE: ${{ inputs.image }}
+          VERSION: ${{ needs.app-version.outputs.version }}
+          # Both publish the same project, so either names the executable.
+          EXECUTABLE: ${{ needs.publish-linux-x64.outputs.executable-name || needs.publish-linux-arm64.outputs.executable-name }}
+        run: |
+          for rid in linux-musl-x64 linux-musl-arm64; do
+            [ -d "publish/$rid" ] || continue
+            # actions/upload-artifact does not keep the executable bit; tar does.
+            chmod +x "publish/$rid/$EXECUTABLE"
+            archive="$IMAGE-$VERSION-$rid.tar.gz"
+            # The files at the archive's root, as the win-x64 zip has them.
+            (cd "publish/$rid" && tar -czf "../../$archive" -- *)
+            # sha256sum's own format, as the win-x64 zip's.
+            sha256sum "$archive" > "$archive.sha256"
+            cat "$archive.sha256"
+          done
+
+      # The archives are the only files at the workspace root: the downloads sit under publish/.
+      # --repo and --clobber as in release-win-x64.
+      - name: Attach to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" ./*.tar.gz ./*.tar.gz.sha256 --repo "$GITHUB_REPOSITORY" --clobber
+
+  # Off pull requests only: a pull request pushes no image. Off with `push-image: false`, so a caller
+  # that ships only binaries needs no Dockerfile and no registry secrets. Runs on x64 with QEMU for
+  # the arm64 platform's Dockerfile steps.
   push-linux-image:
     needs: [decide-publish, publish-linux-x64, publish-linux-arm64]
     if: >-
       ${{ !cancelled() && github.event_name != 'pull_request'
+      && inputs.push-image
       && needs.decide-publish.outputs.publish == 'true'
       && (inputs.linux-x64 || inputs.linux-arm64)
       && (!inputs.linux-x64 || needs.publish-linux-x64.result == 'success')
@@ -641,10 +722,10 @@ jobs:
           labels: ${{ steps.meta-acr.outputs.labels }}
 
   # Deletes this call's artifacts by name, never every artifact of the run: two calls in one run must
-  # not delete each other's. Needs the push and the release, so on a tag both have downloaded what
+  # not delete each other's. Needs the push and the releases, so on a tag they have downloaded what
   # they read first. One step per target, each only when that publish uploaded something.
   cleanup:
-    needs: [publish-linux-x64, publish-linux-arm64, publish-win-x64, push-linux-image, release-win-x64]
+    needs: [publish-linux-x64, publish-linux-arm64, publish-win-x64, push-linux-image, release-win-x64, release-linux-archives]
     if: >-
       ${{ always()
       && !(github.event_name == 'pull_request' && inputs.keep-pr-artifacts)
