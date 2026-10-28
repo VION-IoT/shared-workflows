@@ -9,6 +9,6 @@ ARG TARGETARCH
 COPY publish/${TARGETARCH}/ .
 
 # actions/upload-artifact does not keep the executable bit.
-RUN chmod +x Vion.Fixture.AotApp
+RUN chmod +x vion-fixture-aot
 
-ENTRYPOINT ["./Vion.Fixture.AotApp"]
+ENTRYPOINT ["./vion-fixture-aot"]

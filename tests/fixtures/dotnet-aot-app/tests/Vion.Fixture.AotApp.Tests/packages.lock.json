@@ -132,7 +132,7 @@
           "MSTest.Analyzers": "4.4.1"
         }
       },
-      "vion.fixture.aotapp": {
+      "vion-fixture-aot": {
         "type": "Project"
       }
     }

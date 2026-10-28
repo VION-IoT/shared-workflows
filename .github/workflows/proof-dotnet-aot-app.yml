@@ -1,29 +1,34 @@
 name: Proof — .NET NativeAOT app
 # In-repo proof for the reusable workflow `dotnet-aot-app.yml`, run against the fixture under
 # tests/fixtures/dotnet-aot-app/: a NativeAOT console app with linux-musl-x64, linux-musl-arm64 and
-# win-x64 targets, locked restores, an SDK pinned in its global.json, and one test project. The
-# workflow is called twice, on GitHub's runners (`github-hosted-runners: true`), with different
-# `image` values so each call's artifacts have their own names:
+# win-x64 targets, an `AssemblyName` apart from its project file name, locked restores, an SDK
+# pinned in its global.json, and one test project. The workflow is called three times, on GitHub's
+# runners (`github-hosted-runners: true`), with different `image` values so each call's artifacts
+# have their own names:
 #   - `every-target` grants `contents: write` and turns on all three targets, with
 #     `keep-pr-artifacts: false`;
 #   - `read-only` grants only `contents: read` and turns on the Linux targets, with
-#     `keep-pr-artifacts: true`.
-# Both set `publish-only-on-build-changes: false`, so both publish. Three jobs then assert:
-#   1. `read-only`'s artifacts are still there, and `file` reports x86-64 for amd64 and aarch64 for
-#      arm64;
+#     `keep-pr-artifacts: true`;
+#   - `binaries-only` grants `contents: write` and turns on linux-x64, with
+#     `linux-release-archives: true` and `push-image: false`.
+# All set `publish-only-on-build-changes: false`, so all publish. Three jobs then assert:
+#   1. `read-only`'s artifacts are still there, each holding the executable named by the
+#      `AssemblyName`, and `file` reports x86-64 for amd64 and aarch64 for arm64;
 #   2. `every-target`'s `test-win-x64`, `publish-win-x64` and `cleanup` succeeded, and its three
 #      artifacts are gone — deleted by name, while `read-only`'s in the same run were not;
 #   3. both calls' `workflow-file` output names this file: inside a called workflow
 #      `github.workflow_ref` names the caller's top-level workflow, which is what the pull-request
 #      publish filter watches.
 # What the run itself shows, and no job can assert: a run that starts at all with `read-only`'s
-# grant shows that a caller granting only `contents: read` with `win-x64: false` is accepted. A
+# grant shows that a caller granting only `contents: read` with `win-x64: false` is accepted, and
+# with `binaries-only` that the workflow declares `linux-release-archives` and `push-image`. A
 # refused call fails the run before any job runs.
 #
 # What it does not cover:
-#   - `push-linux-image` and `release-win-x64`: both run off pull requests only, and this repository
-#     holds no registry secrets. For the same reason there is no workflow_dispatch: outside a pull
-#     request `push-linux-image` runs and fails on the login.
+#   - `push-linux-image`, `release-win-x64` and `release-linux-archives`: all run off pull requests
+#     only, so neither the archives nor the push skipped under `push-image: false` show here; a
+#     caller's first release shows both. This repository holds no registry secrets either, so there
+#     is no workflow_dispatch: outside a pull request `push-linux-image` runs and fails on the login.
 #   - the file filter's match, since both calls publish regardless of what changed.
 #   - `sdk-version` failing on an empty version: a `uses:` job cannot be asserted to fail —
 #     `continue-on-error` is not among the keys a `uses:` job accepts.
@@ -83,6 +88,26 @@ jobs:
       run-style: false
       check-dependency-majors: false
 
+  # A CLI's call: bare binaries on a release, no image. One target is enough to show the inputs are
+  # accepted; `read-only` already publishes both.
+  binaries-only:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/dotnet-aot-app.yml
+    with:
+      solution: tests/fixtures/dotnet-aot-app/AotAppFixture.slnx
+      publish-project: tests/fixtures/dotnet-aot-app/src/Vion.Fixture.AotApp/Vion.Fixture.AotApp.csproj
+      image: proof-aot-binaries-only
+      docker-context: tests/fixtures/dotnet-aot-app
+      linux-x64: true
+      linux-release-archives: true
+      push-image: false
+      publish-only-on-build-changes: false
+      github-hosted-runners: true
+      global-json: tests/fixtures/dotnet-aot-app/global.json
+      run-style: false
+      check-dependency-majors: false
+
   kept-artifacts:
     name: Assert read-only's artifacts are kept and built for their targets
     needs: read-only
@@ -98,11 +123,13 @@ jobs:
           name: proof-aot-read-only_arm64
           path: arm64
 
+      # The name is the fixture's AssemblyName, not its project file's: a workflow that looked the
+      # executable up by the file name fails its own summary before this.
       - name: file reports x86-64 for amd64 and aarch64 for arm64
         shell: bash
         run: |
-          amd64=$(file amd64/Vion.Fixture.AotApp)
-          arm64=$(file arm64/Vion.Fixture.AotApp)
+          amd64=$(file amd64/vion-fixture-aot)
+          arm64=$(file arm64/vion-fixture-aot)
           echo "$amd64"
           echo "$arm64"
           [[ "$amd64" == *x86-64* ]] || { echo "::error::amd64 is not an x86-64 executable: $amd64"; exit 1; }
@@ -121,7 +148,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # One page is enough: this workflow has under thirty jobs. `filter=latest` lists each job's
+          # One page is enough: this workflow has under fifty jobs. `filter=latest` lists each job's
           # latest attempt, so a "re-run failed jobs" that re-runs only this one still finds the rest.
           $jobs = @((gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/jobs?filter=latest&per_page=100" |
               ConvertFrom-Json).jobs)

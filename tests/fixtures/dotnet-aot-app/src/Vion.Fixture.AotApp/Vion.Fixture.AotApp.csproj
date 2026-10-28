@@ -2,6 +2,9 @@
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
+        <!-- Apart from the file name, as a CLI's is, so the proof fails a workflow that names the
+             executable after the project file. -->
+        <AssemblyName>vion-fixture-aot</AssemblyName>
         <RootNamespace>Vion.Fixture.AotApp</RootNamespace>
         <PublishAot>true</PublishAot>
         <!-- The three targets dotnet-aot-app.yml publishes. No linux-musl-arm: 32-bit ARM is dropped. -->
