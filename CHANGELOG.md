@@ -7,6 +7,8 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+## v1.18.0 — 2026-10-28
+
 ### Added
 
 - **`dotnet-aot-app.yml` ships bare binaries.** `linux-release-archives` (default `false`): on a `v*`
