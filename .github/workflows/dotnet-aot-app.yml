@@ -556,11 +556,11 @@ jobs:
       version: ${{ needs.app-version.outputs.version }}
       artifact-name: ${{ inputs.image }}_win-x64
 
-  # With release-linux-archives, the only jobs without `permissions:`, so they get the caller's
-  # `contents: write` and every other job stays at `contents: read`. Runs on a GitHub-hosted runner
-  # for `gh`, which VION's own runners lack. Its `if:` names the results it needs because the implicit success() also counts a skipped
-  # job further up the chain (dependency-majors, test-win-x64), which would skip the release behind
-  # a green run.
+  # This job and release-linux-archives are the only jobs without `permissions:`, so they get the
+  # caller's `contents: write` and every other job stays at `contents: read`. This one runs on a
+  # GitHub-hosted runner for `gh`, which VION's own runners lack. Its `if:` names the results it needs
+  # because the implicit success() also counts a skipped job further up the chain
+  # (dependency-majors, test-win-x64), which would skip the release behind a green run.
   release-win-x64:
     needs: [app-version, publish-win-x64]
     if: >-
@@ -598,8 +598,8 @@ jobs:
         run: gh release upload "$env:GITHUB_REF_NAME" "$env:ARCHIVE" "$env:ARCHIVE.sha256" --repo "$env:GITHUB_REPOSITORY" --clobber
 
   # release-win-x64 for the Linux publishes, without `permissions:` for the same reason. Like
-  # push-linux-image it waits for every enabled Linux target, so a release gets all its archives or
-  # none.
+  # push-linux-image it waits for every enabled Linux target, so a release gets all its Linux
+  # archives or none. It does not wait for win-x64, as release-win-x64 does not wait for Linux.
   release-linux-archives:
     needs: [app-version, publish-linux-x64, publish-linux-arm64]
     if: >-
