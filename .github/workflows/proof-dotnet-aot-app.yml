@@ -98,11 +98,13 @@ jobs:
           name: proof-aot-read-only_arm64
           path: arm64
 
+      # The name is the fixture's AssemblyName, not its project file's: a workflow that looked the
+      # executable up by the file name fails its own summary before this.
       - name: file reports x86-64 for amd64 and aarch64 for arm64
         shell: bash
         run: |
-          amd64=$(file amd64/Vion.Fixture.AotApp)
-          arm64=$(file arm64/Vion.Fixture.AotApp)
+          amd64=$(file amd64/vion-fixture-aot)
+          arm64=$(file arm64/vion-fixture-aot)
           echo "$amd64"
           echo "$arm64"
           [[ "$amd64" == *x86-64* ]] || { echo "::error::amd64 is not an x86-64 executable: $amd64"; exit 1; }

@@ -315,9 +315,13 @@ jobs:
     runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64"]') }}
     permissions:
       contents: read
+    outputs:
+      executable-name: ${{ steps.summary.outputs.executable-name }}
     env:
       RUNTIME_IDENTIFIER: linux-musl-x64
       PUBLISH_OUTPUT: ${{ inputs.docker-context }}/publish/amd64
+      # Beside the publish, not in it: the container writes the executable's name here.
+      NAME_FILE: ${{ inputs.docker-context }}/publish/amd64.name
     steps:
       # No token left in .git/config: the checkout is mounted into the container that runs the pull
       # request's MSBuild as root, and nothing here uses git after this step.
@@ -340,6 +344,7 @@ jobs:
             -e PUBLISH_PROJECT \
             -e RUNTIME_IDENTIFIER \
             -e PUBLISH_OUTPUT \
+            -e NAME_FILE \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             -v "$PWD:/src" \
@@ -357,17 +362,32 @@ jobs:
                 -r "$RUNTIME_IDENTIFIER" \
                 -o "/src/$PUBLISH_OUTPUT" \
                 -p:Version="$VERSION"
+
+              # The executable is named by the AssemblyName, which can differ from the project file
+              # name. Read here because dotnet runs only in this container.
+              dotnet msbuild "$PUBLISH_PROJECT" \
+                -getProperty:AssemblyName \
+                -p:Configuration=Release \
+                -p:RuntimeIdentifier="$RUNTIME_IDENTIFIER" \
+                > "/src/$NAME_FILE"
             '
 
       - name: Summarise the publish
+        id: summary
         shell: bash
         env:
           PUBLISH_PROJECT: ${{ inputs.publish-project }}
         run: |
           count=$(find "$PUBLISH_OUTPUT" -type f | wc -l)
           [ "$count" -gt 0 ] || { echo "Publish produced no files in $PUBLISH_OUTPUT." >&2; exit 1; }
-          executable="$PUBLISH_OUTPUT/$(basename "$PUBLISH_PROJECT" .csproj)"
+          name=$(cat "$NAME_FILE")
+          rm "$NAME_FILE"
+          case "$name" in
+            '' | */* | *$'\n'*) echo "No usable AssemblyName read from $PUBLISH_PROJECT: '$name'." >&2; exit 1 ;;
+          esac
+          executable="$PUBLISH_OUTPUT/$name"
           [ -f "$executable" ] || { echo "Publish produced no executable $executable." >&2; exit 1; }
+          echo "executable-name=$name" >> "$GITHUB_OUTPUT"
           megabytes=$(find "$PUBLISH_OUTPUT" -type f -printf '%s\n' | awk '{ s += $1 } END { printf "%.1f", s / 1048576 }')
           described=$(file "$executable")
           echo "$described"
@@ -399,9 +419,13 @@ jobs:
     runs-on: ${{ inputs.github-hosted-runners && 'ubuntu-24.04-arm' || fromJSON('["self-hosted","Linux","ARM64"]') }}
     permissions:
       contents: read
+    outputs:
+      executable-name: ${{ steps.summary.outputs.executable-name }}
     env:
       RUNTIME_IDENTIFIER: linux-musl-arm64
       PUBLISH_OUTPUT: ${{ inputs.docker-context }}/publish/arm64
+      # Beside the publish, not in it: the container writes the executable's name here.
+      NAME_FILE: ${{ inputs.docker-context }}/publish/arm64.name
     steps:
       # No token left in .git/config: the checkout is mounted into the container that runs the pull
       # request's MSBuild as root, and nothing here uses git after this step.
@@ -424,6 +448,7 @@ jobs:
             -e PUBLISH_PROJECT \
             -e RUNTIME_IDENTIFIER \
             -e PUBLISH_OUTPUT \
+            -e NAME_FILE \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             -v "$PWD:/src" \
@@ -441,17 +466,32 @@ jobs:
                 -r "$RUNTIME_IDENTIFIER" \
                 -o "/src/$PUBLISH_OUTPUT" \
                 -p:Version="$VERSION"
+
+              # The executable is named by the AssemblyName, which can differ from the project file
+              # name. Read here because dotnet runs only in this container.
+              dotnet msbuild "$PUBLISH_PROJECT" \
+                -getProperty:AssemblyName \
+                -p:Configuration=Release \
+                -p:RuntimeIdentifier="$RUNTIME_IDENTIFIER" \
+                > "/src/$NAME_FILE"
             '
 
       - name: Summarise the publish
+        id: summary
         shell: bash
         env:
           PUBLISH_PROJECT: ${{ inputs.publish-project }}
         run: |
           count=$(find "$PUBLISH_OUTPUT" -type f | wc -l)
           [ "$count" -gt 0 ] || { echo "Publish produced no files in $PUBLISH_OUTPUT." >&2; exit 1; }
-          executable="$PUBLISH_OUTPUT/$(basename "$PUBLISH_PROJECT" .csproj)"
+          name=$(cat "$NAME_FILE")
+          rm "$NAME_FILE"
+          case "$name" in
+            '' | */* | *$'\n'*) echo "No usable AssemblyName read from $PUBLISH_PROJECT: '$name'." >&2; exit 1 ;;
+          esac
+          executable="$PUBLISH_OUTPUT/$name"
           [ -f "$executable" ] || { echo "Publish produced no executable $executable." >&2; exit 1; }
+          echo "executable-name=$name" >> "$GITHUB_OUTPUT"
           megabytes=$(find "$PUBLISH_OUTPUT" -type f -printf '%s\n' | awk '{ s += $1 } END { printf "%.1f", s / 1048576 }')
           described=$(file "$executable")
           echo "$described"
