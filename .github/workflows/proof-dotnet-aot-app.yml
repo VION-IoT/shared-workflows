@@ -1,10 +1,11 @@
 name: Proof — .NET NativeAOT app
 # In-repo proof for the reusable workflow `dotnet-aot-app.yml`, run against the fixture under
 # tests/fixtures/dotnet-aot-app/: a NativeAOT console app with linux-musl-x64, linux-musl-arm64 and
-# win-x64 targets, an `AssemblyName` apart from its project file name, locked restores, an SDK
-# pinned in its global.json, and one test project. The workflow is called three times, on GitHub's
-# runners (`github-hosted-runners: true`), with different `image` values so each call's artifacts
-# have their own names:
+# win-x64 targets, static Linux executables with OpenSSL linked in (`StaticExecutable` and
+# `StaticOpenSslLinking`, as vion-cli publishes), an `AssemblyName` apart from its project file
+# name, locked restores, an SDK pinned in its global.json, and one test project. The workflow is
+# called three times, on GitHub's runners (`github-hosted-runners: true`), with different `image`
+# values so each call's artifacts have their own names:
 #   - `every-target` grants `contents: write` and turns on all three targets, with
 #     `keep-pr-artifacts: false`;
 #   - `read-only` grants only `contents: read` and turns on the Linux targets, with
