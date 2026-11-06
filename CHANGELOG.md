@@ -7,6 +7,16 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+### Added
+
+- **`dotnet-aot-app.yml` publishes a project that sets `StaticOpenSslLinking`.** Both Linux publish
+  jobs add `cmake openssl-dev openssl-libs-static` to the packages they install in the Alpine SDK
+  image, which is what ILCompiler needs to build and link its OpenSSL shim statically. A
+  `StaticExecutable` has no `dlopen`, so without the shim its first HTTPS call aborts on every
+  distribution; with it the call works. A project that does not set the property never builds the
+  shim, so nothing changes for it. `proof-dotnet-aot-app.yml`'s fixture now sets both properties
+  on Linux, and its artifact check requires a statically linked executable.
+
 ## v1.18.0 — 2026-10-28
 
 ### Added

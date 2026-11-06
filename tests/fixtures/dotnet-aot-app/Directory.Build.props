@@ -11,6 +11,11 @@
         <InvariantGlobalization>true</InvariantGlobalization>
         <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
         <RestoreLockedMode>true</RestoreLockedMode>
+        <!-- NU1903 stays a warning: GHSA-p3jp-9v83-76w9 flags the ILCompiler the pinned SDK
+             bundles, and the next SDK's image is on an Alpine the workflow does not pin. The
+             fixture ships nothing, so the advisory has nothing to reach here; it is listed in
+             the restore log, not muted. -->
+        <WarningsNotAsErrors>NU1903</WarningsNotAsErrors>
     </PropertyGroup>
 
 </Project>
