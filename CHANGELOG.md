@@ -7,6 +7,8 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+## v1.19.0 — 2026-11-06
+
 ### Added
 
 - **`dotnet-aot-app.yml` publishes a project that sets `StaticOpenSslLinking`.** Both Linux publish
