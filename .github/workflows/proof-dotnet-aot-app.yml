@@ -14,7 +14,8 @@ name: Proof — .NET NativeAOT app
 #     `linux-release-archives: true` and `push-image: false`.
 # All set `publish-only-on-build-changes: false`, so all publish. Three jobs then assert:
 #   1. `read-only`'s artifacts are still there, each holding the executable named by the
-#      `AssemblyName`, and `file` reports x86-64 for amd64 and aarch64 for arm64;
+#      `AssemblyName`, and `file` reports x86-64 for amd64 and aarch64 for arm64, each statically
+#      linked;
 #   2. `every-target`'s `test-win-x64`, `publish-win-x64` and `cleanup` succeeded, and its three
 #      artifacts are gone — deleted by name, while `read-only`'s in the same run were not;
 #   3. both calls' `workflow-file` output names this file: inside a called workflow
@@ -126,7 +127,10 @@ jobs:
 
       # The name is the fixture's AssemblyName, not its project file's: a workflow that looked the
       # executable up by the file name fails its own summary before this.
-      - name: file reports x86-64 for amd64 and aarch64 for arm64
+      # Static: `file` says `statically linked` or `static-pie linked` for a StaticExecutable, so a
+      # fixture whose two static properties stopped taking effect fails here rather than passing
+      # with an ordinary executable.
+      - name: file reports x86-64 for amd64 and aarch64 for arm64, each statically linked
         shell: bash
         run: |
           amd64=$(file amd64/vion-fixture-aot)
@@ -135,7 +139,11 @@ jobs:
           echo "$arm64"
           [[ "$amd64" == *x86-64* ]] || { echo "::error::amd64 is not an x86-64 executable: $amd64"; exit 1; }
           [[ "$arm64" == *aarch64* ]] || { echo "::error::arm64 is not an aarch64 executable: $arm64"; exit 1; }
-          echo 'Confirmed: keep-pr-artifacts left both publishes, each built for its target.'
+          for f in "$amd64" "$arm64"; do
+            [[ "$f" == *'statically linked'* || "$f" == *'static-pie linked'* ]] \
+              || { echo "::error::not a static executable: $f"; exit 1; }
+          done
+          echo 'Confirmed: keep-pr-artifacts left both publishes, each built for its target and static.'
 
   cleaned-up:
     name: Assert every-target published win-x64 and deleted its own artifacts
