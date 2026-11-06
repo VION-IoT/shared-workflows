@@ -379,7 +379,11 @@ jobs:
             sh -eux -c '
               trap "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" EXIT
 
-              apk add --no-cache build-base llvm lld zlib-dev
+              # cmake, openssl-dev and openssl-libs-static are what a publish project setting
+              # StaticOpenSslLinking needs: ILCompiler then builds and links its OpenSSL shim
+              # statically. A project that does not set it never builds the shim, so the three
+              # packages change nothing for it.
+              apk add --no-cache build-base llvm lld zlib-dev cmake openssl-dev openssl-libs-static
 
               mkdir -p "$HOME"
 
@@ -483,7 +487,11 @@ jobs:
             sh -eux -c '
               trap "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" EXIT
 
-              apk add --no-cache build-base llvm lld zlib-dev
+              # cmake, openssl-dev and openssl-libs-static are what a publish project setting
+              # StaticOpenSslLinking needs: ILCompiler then builds and links its OpenSSL shim
+              # statically. A project that does not set it never builds the shim, so the three
+              # packages change nothing for it.
+              apk add --no-cache build-base llvm lld zlib-dev cmake openssl-dev openssl-libs-static
 
               mkdir -p "$HOME"
 

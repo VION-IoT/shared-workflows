@@ -7,6 +7,15 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+### Fixed
+
+- **`dotnet-aot-app.yml`'s Alpine publish images carry what `StaticOpenSslLinking` needs.** Both
+  Linux publish jobs add `cmake openssl-dev openssl-libs-static` to the packages they install, so
+  a publish project that sets `StaticOpenSslLinking` links OpenSSL into its static executable
+  instead of failing the link; without it a `StaticExecutable` cannot load OpenSSL at run time, and
+  its first HTTPS call aborts. A project that does not set it never builds the shim, so nothing
+  changes for it. `proof-dotnet-aot-app.yml`'s fixture now sets both properties on Linux.
+
 ## v1.18.0 — 2026-10-28
 
 ### Added
