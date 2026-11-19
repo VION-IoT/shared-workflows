@@ -168,7 +168,7 @@ jobs:
       - uses: actions/checkout@v7
 
       # Fails rather than carrying on with an empty version, which would reach `setup-dotnet` and the
-      # image tag `sdk:-alpine3.23`.
+      # image tag `sdk:-alpine3.24`.
       - id: read
         shell: bash
         env:
@@ -375,7 +375,7 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -v "$PWD:/src" \
             -w /src \
-            "mcr.microsoft.com/dotnet/sdk:$SDK_VERSION-alpine3.23" \
+            "mcr.microsoft.com/dotnet/sdk:$SDK_VERSION-alpine3.24" \
             sh -eux -c '
               trap "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" EXIT
 
@@ -483,7 +483,7 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -v "$PWD:/src" \
             -w /src \
-            "mcr.microsoft.com/dotnet/sdk:$SDK_VERSION-alpine3.23" \
+            "mcr.microsoft.com/dotnet/sdk:$SDK_VERSION-alpine3.24" \
             sh -eux -c '
               trap "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" EXIT
 
