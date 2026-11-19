@@ -7,6 +7,8 @@ input/output rename or removal is a breaking change, additions are not.
 
 ## Unreleased
 
+## v1.19.1 — 2026-11-19
+
 ### Fixed
 
 - **`dotnet-aot-app.yml` publishes on Alpine 3.24.** Both Linux publish jobs pull
