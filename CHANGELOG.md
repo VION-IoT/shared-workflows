@@ -12,8 +12,10 @@ input/output rename or removal is a breaking change, additions are not.
 - **`dotnet-aot-app.yml` publishes on Alpine 3.24.** Both Linux publish jobs pull
   `mcr.microsoft.com/dotnet/sdk:<global.json version>-alpine3.24` instead of `-alpine3.23`. MCR
   ships new SDK patches only on the newest Alpine: 10.0.402 and later, and 11.0.100, have no
-  `-alpine3.23` tag, so a caller pinning one of them failed to pull the build image. 10.0.400 and
-  10.0.401 are published on both, so callers pinned to them keep working, now on 3.24.
+  `-alpine3.23` tag, so a caller pinning one of them failed to pull the build image. 10.0.301 to
+  10.0.401 are published on both, so callers pinned to them keep working, now on 3.24. 10.0.300
+  and earlier have no `-alpine3.24` tag: a caller pinned to one of them raises its `global.json`
+  SDK to 10.0.301 or later before taking this release.
 
 ## v1.19.0 — 2026-11-06
 
